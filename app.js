@@ -16,6 +16,52 @@ const note = text => $('notice').textContent = text || '';
 const title = text => $('sectionTitle').textContent = text;
 const clean = text => String(text ?? '').toLocaleLowerCase('ar').trim();
 const validDate = d => String(d || '').slice(0,10);
+// Display the local wall-clock time recorded by the fingerprint device; no UTC conversion.
+function formatChecktime(raw){
+  const s=String(raw||'').replace('T',' ');
+  const m=s.match(/^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2}):(\d{2})/);
+  if(!m)return s;
+  const hour=Number(m[2]);
+  return `${m[1]}   ${hour%12||12}:${m[3]}:${m[4]} ${hour>=12?'PM':'AM'}`;
+}
+function sortRows(rows){
+  const key=document.getElementById('sortField')?.value||'CHECKTIME';
+  const direction=document.getElementById('sortDirection')?.value==='asc'?1:-1;
+  return [...rows].sort((a,b)=>{
+    const av=a[key]??'',bv=b[key]??'';
+    const cmp=['USERID','DEPTID','COUNT'].includes(key)?Number(av)-Number(bv):
+      String(av).localeCompare(String(bv),'ar',{numeric:true,sensitivity:'base'});
+    return direction*cmp;
+  });
+}
+function ensureSorting(){
+  if(document.getElementById('sortField'))return;
+  const target=document.getElementById('applyFilters');
+  if(!target)return;
+  const wrapper=document.createElement('div');wrapper.className='sort-controls';
+  wrapper.style.cssText='display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0;';
+  const label=document.createElement('label');label.textContent='ترتيب حسب: ';
+  const select=document.createElement('select');select.id='sortField';
+  [['CHECKTIME','التاريخ وأول وقت حضور'],['NAME','الاسم'],['CLASS_NAME','الفصل'],['USERID','رقم البصمة']].forEach(([value,name])=>select.add(new Option(name,value)));
+  const dir=document.createElement('select');dir.id='sortDirection';
+  dir.add(new Option('تنازلي','desc'));dir.add(new Option('تصاعدي','asc'));
+  select.onchange=filter;dir.onchange=filter;
+  label.append(select);wrapper.append(label,dir);
+  target.parentElement.append(wrapper);
+}
+function updateSorting(){
+  ensureSorting();
+  const wrap=document.querySelector('.sort-controls');if(!wrap)return;
+  wrap.hidden=['users','import'].includes(view);
+  const field=document.getElementById('sortField');
+  const allowed=['home','classes'].includes(view)?[['DEPTID','رقم الفصل'],['DEPTNAME','اسم الفصل'],['COUNT','عدد الشباب']]:
+    view==='children'?[['USERID','رقم البصمة'],['NAME','الاسم'],['CLASS_NAME','الفصل'],['TITLE','الخادم']]:
+    [['CHECKTIME','التاريخ وأول وقت حضور'],['NAME','الاسم'],['CLASS_NAME','الفصل'],['USERID','رقم البصمة']];
+  const previous=field.value;
+  field.replaceChildren(...allowed.map(([value,label])=>new Option(label,value)));
+  field.value=allowed.some(([v])=>v===previous)?previous:allowed[0][0];
+}
+
 
 function toggleApp(logged) {
   $('login').hidden=logged;
@@ -96,6 +142,7 @@ async function load(v){
   if(v==='users'&&!admin() || ['unregistered','import'].includes(v)&&!attendanceAdmin()){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
   $('datImporter').hidden=v!=='import';view=v;records=[];shown=[];setMessage('');note('جارٍ تحميل البيانات...');
   $('content').replaceChildren();
+  updateSorting();
   document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===v));
   const names={home:'القائمة الرئيسية - خدمة متوسط بنين',children:'إدارة الشباب',classes:'قائمة الفصول - خدمة متوسط بنين',
     attendance:'سجل الحضور والبصمات',unregistered:'البصمات غير المسجلة',reports:'التقارير',users:'إدارة المستخدمين',import:'استيراد ملف البصمة الأسبوعي'};
@@ -162,6 +209,7 @@ function filter(){
     }
     shown=[...firstByDay.values()].sort((a,b)=>String(b.CHECKTIME).localeCompare(String(a.CHECKTIME)));
   }
+  shown=sortRows(shown);
   const content=$('content');content.replaceChildren();
   note(`عدد النتائج: ${shown.length}${records.length>=10000?' (أول 10000 سجل فقط)':''}`);
   if(view==='children' && youthEditor()){const b=document.createElement('button');b.textContent='＋ إضافة شاب جديد';b.className='add-youth';b.onclick=()=>openYouth();content.append(b);}
@@ -187,7 +235,7 @@ function filter(){
   }else if(view==='attendance'||view==='reports'){
     const distinct=new Set(shown.map(r=>`${r.USERID}|${validDate(r.CHECKTIME)}`));
     content.append(summary([['سجلات الحضور (بدون تكرار)',shown.length],['أيام حضور الشباب',distinct.size]]));
-    content.append(table(['رقم البصمة','الاسم','الفصل','التاريخ وأول وقت حضور'],shown,
+    content.append(table(['رقم البصمة','الاسم','الفصل','التاريخ وأول وقت حضور'],shown.map(r=>({...r,CHECKTIME:formatChecktime(r.CHECKTIME)})),
       ['USERID','NAME','CLASS_NAME','CHECKTIME']));
   }
 }
@@ -200,7 +248,7 @@ function csvExport(){
     view==='children'?['رقم البصمة','الاسم','الفصل','الخادم']:
     ['رقم البصمة','الاسم','الفصل','التاريخ وأول وقت حضور'];
   const esc=v=>'"'+String(v??'').replaceAll('"','""')+'"';
-  const csv='\uFEFF'+[headings,...shown.map(r=>keys.map(k=>r[k]))].map(r=>r.map(esc).join(',')).join('\r\n');
+  const csv='\uFEFF'+[headings,...shown.map(r=>keys.map(k=>k==='CHECKTIME'?formatChecktime(r[k]):r[k]))].map(r=>r.map(esc).join(',')).join('\r\n');
   const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
   const a=document.createElement('a');a.href=url;a.download=`خدمة_متوسط_بنين_${view}.csv`;a.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
