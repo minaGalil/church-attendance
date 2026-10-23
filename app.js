@@ -160,7 +160,8 @@ async function load(v){
     if(v==='import'){note('اختَر ملف DAT لمراجعته قبل الاستيراد.');return;}
     if(v==='account'){renderAccount();note('يمكنك تغيير كلمة مرور حسابك.');return;}
     if(v==='users'){
-      note('إدارة الحسابات تحتاج Secure Admin API؛ لن نعرض أو نعدل حسابات المستخدمين من المتصفح مباشرة.');
+      await renderAdminUsers();
+      note('إدارة حسابات الخدام وإعادة تعيين كلمات المرور.');
       return;
     }
     if(v==='home'||v==='classes'||v==='children'||v==='reports'||v==='unregistered'||v==='attendance'){
