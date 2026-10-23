@@ -150,6 +150,16 @@ function filter(){
     }
     return true;
   });
+  // Attendance reports: one row per fingerprint ID per calendar date, keeping earliest punch.
+  if(view==='attendance'||view==='reports'){
+    const firstByDay=new Map();
+    for(const row of shown){
+      const key=`${row.USERID}|${validDate(row.CHECKTIME)}`;
+      const prior=firstByDay.get(key);
+      if(!prior || String(row.CHECKTIME)<String(prior.CHECKTIME)) firstByDay.set(key,row);
+    }
+    shown=[...firstByDay.values()].sort((a,b)=>String(b.CHECKTIME).localeCompare(String(a.CHECKTIME)));
+  }
   const content=$('content');content.replaceChildren();
   note(`عدد النتائج: ${shown.length}${records.length>=10000?' (أول 10000 سجل فقط)':''}`);
   if(!shown.length){const p=document.createElement('p');p.className='empty';p.textContent='لا توجد نتائج مطابقة.';content.append(p);return;}
@@ -171,19 +181,19 @@ function filter(){
     content.append(table(['رقم البصمة','عدد البصمات','أول بصمة','آخر بصمة'],data,['USERID','COUNT','FIRST','LAST']));
   }else if(view==='attendance'||view==='reports'){
     const distinct=new Set(shown.map(r=>`${r.USERID}|${validDate(r.CHECKTIME)}`));
-    content.append(summary([['سجلات البصمة',shown.length],['أيام حضور الشباب (بدون تكرار)',distinct.size]]));
-    content.append(table(['رقم البصمة','الاسم','الفصل','التاريخ والوقت','الجهاز'],shown,
-      ['USERID','NAME','CLASS_NAME','CHECKTIME','SENSORID']));
+    content.append(summary([['سجلات الحضور (بدون تكرار)',shown.length],['أيام حضور الشباب',distinct.size]]));
+    content.append(table(['رقم البصمة','الاسم','الفصل','التاريخ وأول وقت حضور'],shown,
+      ['USERID','NAME','CLASS_NAME','CHECKTIME']));
   }
 }
 function csvExport(){
   if(!shown.length){setMessage('لا توجد بيانات للتصدير.');return;}
   const keys=view==='home'||view==='classes'?['DEPTID','DEPTNAME','COUNT']:
     view==='children'?['USERID','NAME','CLASS_NAME','TITLE']:
-    ['USERID','NAME','CLASS_NAME','CHECKTIME','SENSORID'];
+    ['USERID','NAME','CLASS_NAME','CHECKTIME'];
   const headings=view==='home'||view==='classes'?['رقم الفصل','اسم الفصل','عدد الشباب']:
     view==='children'?['رقم البصمة','الاسم','الفصل','الخادم']:
-    ['رقم البصمة','الاسم','الفصل','التاريخ والوقت','الجهاز'];
+    ['رقم البصمة','الاسم','الفصل','التاريخ وأول وقت حضور'];
   const esc=v=>'"'+String(v??'').replaceAll('"','""')+'"';
   const csv='\uFEFF'+[headings,...shown.map(r=>keys.map(k=>r[k]))].map(r=>r.map(esc).join(',')).join('\r\n');
   const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
