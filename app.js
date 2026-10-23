@@ -158,11 +158,10 @@ async function load(v){
   $('statusLabel').hidden=!['unregistered'].includes(v);
   try{
     if(v==='import'){note('اختَر ملف DAT لمراجعته قبل الاستيراد.');return;}
-    if(v==='home' && !parent()){await renderDashboard();return;}
     if(v==='account'){renderAccount();note('يمكنك تغيير كلمة مرور حسابك.');return;}
     if(v==='users'){
-      note('يمكن لمدير النظام إنشاء الحسابات وإعادة تعيين كلمات المرور.');
       await renderAdminUsers();
+      note('إدارة حسابات الخدام وإعادة تعيين كلمات المرور.');
       return;
     }
     if(v==='home'||v==='classes'||v==='children'||v==='reports'||v==='unregistered'||v==='attendance'){
@@ -497,54 +496,5 @@ function renderAccount(){
   };root.append(form);
 }
 
-
-// Weekly dashboard: each registered youth is counted at most once per selected Thursday.
-// Absence is a roster-minus-punch estimate; it is not proof of absence before DAT upload.
-async function renderDashboard(){
-  const root=$('content');root.replaceChildren();
-  const youth=await loadYouth();
-  const punches=await allRows((a,b)=>sb.from('checkinout').select('USERID,CHECKTIME').order('CHECKTIME',{ascending:false}).range(a,b));
-  const iso=d=>`${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
-  const thursday=s=>{const d=new Date(`${s}T12:00:00Z`);d.setUTCDate(d.getUTCDate()-(d.getUTCDay()+3)%7);return iso(d)};
-  const punchDates=punches.map(p=>validDate(p.CHECKTIME)).filter(x=>/^\d{4}-\d{2}-\d{2}$/.test(x));
-  const today=iso(new Date());
-  const defaultWeek=thursday(punchDates.length?punchDates[0]:today);
-  const controls=document.createElement('div');controls.className='dash-controls';
-  const label=document.createElement('label');label.textContent='أسبوع الخدمة (الخميس): ';
-  const week=document.createElement('input');week.type='date';week.value=defaultWeek;label.append(week);
-  const explanation=document.createElement('p');explanation.className='dash-help';explanation.textContent='الحضور = شاب له بصمة يوم الخميس المختار. الغياب تقديري من قائمة الشباب المسجلين، ويتطلب رفع ملف DAT أولاً.';
-  controls.append(label,explanation);root.append(controls);
-  const area=document.createElement('div');root.append(area);
-  const draw=()=>{
-    area.replaceChildren();
-    const day=week.value;if(!day){area.textContent='اختر تاريخاً.';return;}
-    const target=thursday(day);if(target!==day)week.value=target;
-    const roster=youth.filter(u=>u.DEFAULTDEPTID!=null && deptMap.has(u.DEFAULTDEPTID));
-    const known=new Set(roster.map(u=>Number(u.USERID)));
-    const present=new Set(punches.filter(p=>validDate(p.CHECKTIME)===target && known.has(Number(p.USERID))).map(p=>Number(p.USERID)));
-    const rawCount=punches.filter(p=>validDate(p.CHECKTIME)===target).length;
-    const total=roster.length, attended=present.size, absent=total-attended;
-    const pct=total?100*attended/total:0;
-    area.append(summary([['إجمالي الشباب المسجلين',total],['الحاضرون',attended],['بدون بصمة',absent],['نسبة الحضور',pct.toFixed(1)+'%']]));
-    const warn=document.createElement('p');warn.className='dash-help';warn.textContent=rawCount?`تاريخ الخدمة: ${target} — عدد البصمات الخام: ${rawCount}.`:`لا توجد بصمات مسجلة بتاريخ ${target}. تأكد من رفع ملف DAT قبل اعتبار أي شاب غائباً.`;area.append(warn);
-    const heading=document.createElement('h3');heading.textContent='الحضور حسب الفصل';area.append(heading);
-    const classes=[...deptMap.entries()].filter(([id])=>roster.some(u=>u.DEFAULTDEPTID===id)).map(([id,name])=>{
-      const students=roster.filter(u=>u.DEFAULTDEPTID===id),yes=students.filter(u=>present.has(Number(u.USERID))).length;
-      return {name,total:students.length,yes,no:students.length-yes,pct:students.length?yes/students.length*100:0};
-    });
-    const chart=document.createElement('div');chart.className='dash-chart';
-    classes.forEach(c=>{const item=document.createElement('div');item.className='dash-item';
-      const header=document.createElement('div');header.className='dash-item-head';
-      const name=document.createElement('strong');name.textContent=c.name;
-      const rate=document.createElement('span');rate.textContent=`${c.yes} / ${c.total} (${c.pct.toFixed(1)}%)`;
-      header.append(name,rate);const track=document.createElement('div');track.className='dash-track';
-      const fill=document.createElement('div');fill.className='dash-fill';fill.style.width=c.pct+'%';track.append(fill);item.append(header,track);chart.append(item);
-    });area.append(chart);
-    area.append(table(['الفصل','إجمالي الشباب','الحاضرون','بدون بصمة','نسبة الحضور'],classes.map(c=>({'name':c.name,'total':c.total,'yes':c.yes,'no':c.no,'rate':c.pct.toFixed(1)+'%'})),['name','total','yes','no','rate']));
-    const absentHeading=document.createElement('h3');absentHeading.textContent='الشباب بدون بصمة في الأسبوع المختار';area.append(absentHeading);
-    const missing=roster.filter(u=>!present.has(Number(u.USERID))).map(u=>({USERID:u.USERID,NAME:u.NAME,CLASS_NAME:deptMap.get(u.DEFAULTDEPTID)||'—'}));
-    area.append(table(['رقم البصمة','الاسم','الفصل'],missing,['USERID','NAME','CLASS_NAME']));
-    note(`لوحة متابعة أسبوع ${target} — ${attended} حاضر من ${total} شاب مسجل`);
-  };
-  week.addEventListener('change',draw);draw();
-}
+/* Weekly dashboard */
+.dash-controls{margin:0 0 18px;display:flex;gap:12px;flex-wrap:wrap;align-items:center}.dash-controls label{font-weight:700}.dash-controls input{margin-inline-start:8px;padding:9px;border:1px solid #cbd5d1;border-radius:8px}.dash-help{font-size:13px;color:#52635c;line-height:1.8}.dash-chart{display:grid;gap:12px;margin:16px 0 24px}.dash-item{min-width:0}.dash-item-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:5px}.dash-track{height:12px;background:#e3ebe7;border-radius:20px;overflow:hidden}.dash-fill{height:100%;background:#08765c;border-radius:20px;transition:width .2s}.dash-item-head span{font-variant-numeric:tabular-nums}@media(max-width:600px){.dash-controls{display:block}.dash-controls label{display:block}.dash-controls input{max-width:100%;margin-top:6px}.stat-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.stat strong{font-size:1.3rem}.table-wrap{overflow-x:auto}}
