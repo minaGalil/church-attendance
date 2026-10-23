@@ -1,64 +1,208 @@
+
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from './config.js';
+
 const $ = id => document.getElementById(id);
-const message = txt => { $('message').textContent = txt || ''; };
-const configured = !SUPABASE_URL.includes('YOUR_PROJECT_REF') && !SUPABASE_PUBLISHABLE_KEY.includes('YOUR_');
-if (!configured) message('ضع Project URL وPublishable Key في config.js أولاً.');
+const configured = SUPABASE_URL.startsWith('https://') && !SUPABASE_URL.includes('YOUR_PROJECT_REF')
+  && !SUPABASE_PUBLISHABLE_KEY.includes('YOUR_');
 const sb = configured ? createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY) : null;
-let roles=[], currentView='children', rows=[], departments=new Map();
-const parentOnly=()=>roles.length>0 && roles.every(r=>r==='parent');
-function show(view){$('login').hidden=view==='app';$('app').hidden=view!=='app';}
-function makeTable(headers,data,keys){const wrap=document.createElement('div');wrap.className='table-wrap';const t=document.createElement('table');const thead=document.createElement('thead');const head=document.createElement('tr');headers.forEach(h=>{const th=document.createElement('th');th.textContent=h;head.append(th)});thead.append(head);t.append(thead);const body=document.createElement('tbody');data.forEach(item=>{const tr=document.createElement('tr');keys.forEach(k=>{const td=document.createElement('td');td.textContent=item[k]??'';tr.append(td)});body.append(tr)});t.append(body);wrap.append(t);return wrap;}
-async function initialize(){if(!sb)return;const {data:{user},error}=await sb.auth.getUser();if(error||!user){show('login');return;}
- const {data:account,error:ae}=await sb.from('APP_USERS').select('FULL_NAME,IS_ACTIVE').eq('AUTH_USER_ID',user.id).maybeSingle();
- const {data:roleRows,error:re}=await sb.from('APP_USER_ROLES').select('ROLE').eq('AUTH_USER_ID',user.id);
- if(ae||re||!account?.IS_ACTIVE||!roleRows?.length){await sb.auth.signOut();show('login');message('الحساب غير مفعل أو ليس له صلاحيات.');return;}
- roles=roleRows.map(x=>x.ROLE);$('who').textContent=account.FULL_NAME||user.email;show('app');
- document.querySelector('[data-view="children"]').hidden=parentOnly();
- document.querySelector('[data-view="unregistered"]').hidden=!roles.some(r=>['super_admin','church_admin','attendance_manager'].includes(r));
- await loadDepartments();await load(parentOnly()?'attendance':'children');
+let roles=[], view='home', records=[], shown=[], deptMap=new Map(), youthMap=new Map();
+const admin = () => roles.some(x=>['super_admin','church_admin'].includes(x));
+const attendanceAdmin = () => roles.some(x=>['super_admin','church_admin','attendance_manager'].includes(x));
+const parent = () => roles.includes('parent') && !roles.some(x=>x!=='parent');
+const setMessage = text => $('message').textContent = text || '';
+const note = text => $('notice').textContent = text || '';
+const title = text => $('sectionTitle').textContent = text;
+const clean = text => String(text ?? '').toLocaleLowerCase('ar').trim();
+const validDate = d => String(d || '').slice(0,10);
+
+function toggleApp(logged) {
+  $('login').hidden=logged;
+  $('app').hidden=!logged;
 }
-async function loadDepartments(){departments=new Map();const sel=$('department');sel.replaceChildren(new Option('كل الفصول',''));
- if(parentOnly()){sel.closest('label').hidden=true;return;}sel.closest('label').hidden=false;
- const {data,error}=await sb.from('DEPARTMENTS').select('DEPTID,DEPTNAME').order('DEPTID');if(error)return;
- (data||[]).forEach(d=>{departments.set(d.DEPTID,d.DEPTNAME);sel.add(new Option(d.DEPTNAME,String(d.DEPTID)))});
-}
-async function fetchAll(queryFactory,max=5000){let out=[];for(let from=0;from<max;from+=500){const {data,error}=await queryFactory(from,from+499);if(error)throw error;out.push(...(data||[]));if(!data||data.length<500)break;}return out;}
-async function load(view){if(!sb)return;currentView=view;rows=[];message('');$('content').replaceChildren();$('notice').textContent='جارٍ تحميل البيانات...';$('sectionTitle').textContent=view==='children'?'إدارة شباب متوسط بنين':view==='attendance'?'سجل الحضور':'البصمات غير المسجلة';
- $('dateFrom').closest('label').hidden=view==='children';$('dateTo').closest('label').hidden=view==='children';$('department').closest('label').hidden=parentOnly()||view==='unregistered';
- if(view==='unregistered'){$('notice').textContent='هذا التقرير يحتاج API آمن لربط البصمات غير المسجلة دون كشف بيانات الشباب. سيتم تفعيله في التحديث القادم.';$('exportCsv').hidden=true;return;}
- if(view==='children'&&parentOnly()){$('notice').textContent='غير مصرح';return;}
- try{
-  if(view==='children'){
-   rows=await fetchAll((a,b)=>sb.from('USERINFO').select('USERID,NAME,DEFAULTDEPTID').order('USERID').range(a,b));
-   rows=rows.map(x=>({...x,CLASS_NAME:departments.get(x.DEFAULTDEPTID)||`فصل ${x.DEFAULTDEPTID??'غير محدد'}`}));
-  }else{
-   rows=await fetchAll((a,b)=>sb.from('checkinout').select('ID,USERID,CHECKTIME,SENSORID').order('CHECKTIME',{ascending:false}).range(a,b));
-   // Parent attendance remains restricted by RLS. Never query unrestricted children for parent accounts.
-   if(!parentOnly()){
-    const {data:users}=await sb.from('USERINFO').select('USERID,NAME,DEFAULTDEPTID').limit(1000);
-    const names=new Map((users||[]).map(x=>[x.USERID,x]));
-    rows=rows.map(x=>{const u=names.get(x.USERID);return {...x,NAME:u?.NAME||'غير مسجل / غير متاح',DEFAULTDEPTID:u?.DEFAULTDEPTID??null,CLASS_NAME:departments.get(u?.DEFAULTDEPTID)||'غير محدد'};});
-   }
+function table(headers, data, fields) {
+  const wrap=document.createElement('div'); wrap.className='table-wrap';
+  const t=document.createElement('table'), head=document.createElement('thead'), tr=document.createElement('tr');
+  headers.forEach(h=>{const th=document.createElement('th'); th.textContent=h; tr.append(th)});
+  head.append(tr); t.append(head);
+  const body=document.createElement('tbody');
+  for (const row of data) {
+    const tr=document.createElement('tr');
+    fields.forEach(f=>{const td=document.createElement('td'); td.textContent=row[f]??'—'; tr.append(td)});
+    body.append(tr);
   }
-  applyFilters();
- }catch(e){$('notice').textContent='تعذر تحميل البيانات.';message(e.message||'حدث خطأ');}
+  t.append(body); wrap.append(t); return wrap;
 }
-let visibleRows=[];
-function applyFilters(){if(currentView==='unregistered')return;const q=$('search').value.trim().toLocaleLowerCase('ar');const dept=$('department').value;const start=$('dateFrom').value;const end=$('dateTo').value;
- visibleRows=rows.filter(r=>{if(q&&!String(r.USERID).includes(q)&&!String(r.NAME||'').toLocaleLowerCase('ar').includes(q))return false;if(dept&&String(r.DEFAULTDEPTID)!==dept)return false;if(currentView==='attendance'){const d=String(r.CHECKTIME||'').slice(0,10);if(start&&d<start)return false;if(end&&d>end)return false;}return true;});
- $('content').replaceChildren();$('notice').textContent=`عدد السجلات: ${visibleRows.length}${rows.length>=5000?' (أول 5000 سجل فقط)':''}`;
- const keys=currentView==='children'?['USERID','NAME','CLASS_NAME']:parentOnly()?['USERID','CHECKTIME']:['USERID','NAME','CLASS_NAME','CHECKTIME'];
- const headers=currentView==='children'?['رقم البصمة','اسم الشاب','اسم الفصل']:parentOnly()?['رقم البصمة','تاريخ ووقت الحضور']:['رقم البصمة','اسم الشاب','اسم الفصل','تاريخ ووقت الحضور'];
- $('content').append(makeTable(headers,visibleRows,keys));$('exportCsv').hidden=false;
+function summary(items) {
+  const wrap=document.createElement('div'); wrap.className='stat-grid';
+  items.forEach(([name,num])=>{const c=document.createElement('div');c.className='stat';
+    const label=document.createElement('span');label.textContent=name;
+    const value=document.createElement('strong');value.textContent=num;
+    c.append(label,value);wrap.append(c)});
+  return wrap;
 }
-function exportCsv(){if(!visibleRows.length){message('لا توجد نتائج للتصدير.');return;}const keys=currentView==='children'?['USERID','NAME','CLASS_NAME']:parentOnly()?['USERID','CHECKTIME']:['USERID','NAME','CLASS_NAME','CHECKTIME'];const header=currentView==='children'?['رقم البصمة','الاسم','الفصل']:parentOnly()?['رقم البصمة','وقت الحضور']:['رقم البصمة','الاسم','الفصل','وقت الحضور'];
- const escape=v=>'"'+String(v??'').replaceAll('"','""')+'"';const csv='\uFEFF'+[header,...visibleRows.map(r=>keys.map(k=>r[k]))].map(a=>a.map(escape).join(',')).join('\r\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=currentView==='children'?'شباب_متوسط_بنين.csv':'الحضور.csv';a.click();URL.revokeObjectURL(url);
+async function allRows(factory,limit=10000) {
+  let data=[];
+  for(let i=0;i<limit;i+=500) {
+    const result=await factory(i,i+499);
+    if(result.error) throw result.error;
+    data.push(...(result.data||[]));
+    if((result.data||[]).length<500)break;
+  }
+  return data;
 }
-$('loginForm').addEventListener('submit',async e=>{e.preventDefault();if(!sb)return;message('');const {error}=await sb.auth.signInWithPassword({email:$('email').value.trim(),password:$('password').value});if(error){message('فشل تسجيل الدخول. تأكد من البريد وكلمة المرور.');return;}await initialize();});
-$('logout').addEventListener('click',async()=>{if(sb)await sb.auth.signOut();roles=[];rows=[];show('login');message('');});
+async function loadDepartments(){
+  deptMap.clear();
+  const sel=$('department');sel.replaceChildren(new Option('كل الفصول',''));
+  const {data,error}=await sb.from('DEPARTMENTS').select('DEPTID,DEPTNAME,SUPDEPTID').order('DEPTID');
+  if(error) return;
+  for(const d of data||[]) {
+    deptMap.set(d.DEPTID,d.DEPTNAME);
+    if(d.SUPDEPTID && d.SUPDEPTID!==0) sel.add(new Option(d.DEPTNAME,String(d.DEPTID)));
+  }
+}
+async function loadYouth(){
+  const data=await allRows((a,b)=>sb.from('USERINFO').select('USERID,NAME,DEFAULTDEPTID,TITLE').order('USERID').range(a,b));
+  youthMap=new Map(data.map(u=>[u.USERID,u]));
+  return data;
+}
+async function enter(){
+  if(!sb){setMessage('افتح config.js وضع رابط المشروع ومفتاح Publishable Key.');return;}
+  const {data:{user},error}=await sb.auth.getUser();
+  if(error||!user){toggleApp(false);return;}
+  const [{data:account,error:ae},{data:rs,error:re}]=await Promise.all([
+    sb.from('APP_USERS').select('FULL_NAME,IS_ACTIVE').eq('AUTH_USER_ID',user.id).maybeSingle(),
+    sb.from('APP_USER_ROLES').select('ROLE').eq('AUTH_USER_ID',user.id)
+  ]);
+  if(ae||re||!account?.IS_ACTIVE||!rs?.length){
+    await sb.auth.signOut();toggleApp(false);setMessage('الحساب غير مفعل أو لا يملك صلاحية دخول.');return;
+  }
+  roles=rs.map(r=>r.ROLE);
+  $('who').textContent=account.FULL_NAME||user.email;
+  $('roleLabel').textContent=admin()?'مدير النظام':roles.includes('servant')?'خادم':roles.includes('attendance_manager')?'مسؤول الحضور':'ولي أمر';
+  for(const b of document.querySelectorAll('[data-view]')){
+    const v=b.dataset.view;
+    b.hidden=(v==='users'&&!admin()) || (v==='unregistered'&&!attendanceAdmin())
+      || (parent()&&['children','classes','users','unregistered'].includes(v));
+  }
+  toggleApp(true);
+  await loadDepartments();
+  await load('home');
+}
+async function load(v){
+  if(!sb)return;
+  if(parent()&&['children','classes','users','unregistered'].includes(v)){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
+  if(v==='users'&&!admin() || v==='unregistered'&&!attendanceAdmin()){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
+  view=v;records=[];shown=[];setMessage('');note('جارٍ تحميل البيانات...');
+  $('content').replaceChildren();
+  document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===v));
+  const names={home:'القائمة الرئيسية - خدمة متوسط بنين',children:'إدارة الشباب',classes:'قائمة الفصول - خدمة متوسط بنين',
+    attendance:'سجل الحضور والبصمات',unregistered:'البصمات غير المسجلة',reports:'التقارير',users:'إدارة المستخدمين'};
+  title(names[v]||'خدمة متوسط بنين');
+  $('filterCard').hidden=v==='users';
+  $('exportCsv').hidden=v==='users';
+  $('printPdf').hidden=v==='users';
+  $('department').closest('label').hidden=parent()||v==='unregistered';
+  $('dateFrom').closest('label').hidden=['children','classes','home','users'].includes(v);
+  $('dateTo').closest('label').hidden=['children','classes','home','users'].includes(v);
+  $('statusLabel').hidden=!['unregistered'].includes(v);
+  try{
+    if(v==='users'){
+      note('إدارة الحسابات تحتاج Secure Admin API؛ لن نعرض أو نعدل حسابات المستخدمين من المتصفح مباشرة.');
+      return;
+    }
+    if(v==='home'||v==='classes'||v==='children'||v==='reports'||v==='unregistered'||v==='attendance'){
+      if(!parent()){
+        const youth=await loadYouth();
+        if(['home','classes'].includes(v)){
+          const counts=new Map();
+          youth.forEach(u=>counts.set(u.DEFAULTDEPTID,(counts.get(u.DEFAULTDEPTID)||0)+1));
+          records=[...deptMap.entries()].filter(([id])=>counts.has(id)).map(([id,name])=>({
+            DEPTID:id,DEPTNAME:name,COUNT:counts.get(id)||0
+          }));
+        } else if(v==='children'){
+          records=youth.map(u=>({...u,CLASS_NAME:deptMap.get(u.DEFAULTDEPTID)||'غير محدد'}));
+        }
+      }
+      if(['attendance','unregistered','reports'].includes(v)){
+        const punches=await allRows((a,b)=>sb.from('checkinout').select('ID,USERID,CHECKTIME,SENSORID').order('CHECKTIME',{ascending:false}).range(a,b));
+        records=punches.map(p=>{
+          const u=youthMap.get(p.USERID);
+          return {...p,NAME:u?.NAME||'غير مسجل',DEFAULTDEPTID:u?.DEFAULTDEPTID??null,
+            CLASS_NAME:deptMap.get(u?.DEFAULTDEPTID)||'غير محدد'};
+        });
+        if(v==='unregistered')records=records.filter(p=>!youthMap.has(p.USERID));
+      }
+    }
+    filter();
+  }catch(err){note('تعذر تحميل البيانات. راجع سياسات RLS وصلاحيات الحساب.');setMessage(err.message||'خطأ في الاتصال');}
+}
+function filter(){
+  if(view==='users')return;
+  const q=clean($('search').value),dept=$('department').value,from=$('dateFrom').value,to=$('dateTo').value;
+  shown=records.filter(r=>{
+    if(q && ![r.USERID,r.NAME,r.DEPTNAME,r.CLASS_NAME,r.DEPTID,r.TITLE].some(v=>clean(v).includes(q)))return false;
+    if(dept && String(r.DEFAULTDEPTID??r.DEPTID)!==dept)return false;
+    if(['attendance','unregistered','reports'].includes(view)){
+      const date=validDate(r.CHECKTIME);
+      if(from&&date<from)return false;
+      if(to&&date>to)return false;
+    }
+    return true;
+  });
+  const content=$('content');content.replaceChildren();
+  note(`عدد النتائج: ${shown.length}${records.length>=10000?' (أول 10000 سجل فقط)':''}`);
+  if(!shown.length){const p=document.createElement('p');p.className='empty';p.textContent='لا توجد نتائج مطابقة.';content.append(p);return;}
+  if(view==='home'||view==='classes'){
+    content.append(summary([['عدد الفصول',shown.length],['إجمالي الشباب',shown.reduce((s,r)=>s+r.COUNT,0)]]));
+    content.append(table(['رقم الفصل','اسم الفصل','عدد الشباب'],shown,['DEPTID','DEPTNAME','COUNT']));
+  }else if(view==='children'){
+    content.append(table(['رقم البصمة','اسم الشاب','اسم الفصل','الخادم'],shown,['USERID','NAME','CLASS_NAME','TITLE']));
+  }else if(view==='unregistered'){
+    const byUser=new Map();
+    shown.forEach(p=>{
+      if(!byUser.has(p.USERID))byUser.set(p.USERID,{USERID:p.USERID,COUNT:0,FIRST:p.CHECKTIME,LAST:p.CHECKTIME});
+      const v=byUser.get(p.USERID);v.COUNT++;
+      if(p.CHECKTIME<v.FIRST)v.FIRST=p.CHECKTIME;
+      if(p.CHECKTIME>v.LAST)v.LAST=p.CHECKTIME;
+    });
+    const data=[...byUser.values()];
+    note(`عدد أرقام البصمة غير المسجلة: ${data.length} — إجمالي البصمات: ${shown.length}`);
+    content.append(table(['رقم البصمة','عدد البصمات','أول بصمة','آخر بصمة'],data,['USERID','COUNT','FIRST','LAST']));
+  }else if(view==='attendance'||view==='reports'){
+    const distinct=new Set(shown.map(r=>`${r.USERID}|${validDate(r.CHECKTIME)}`));
+    content.append(summary([['سجلات البصمة',shown.length],['أيام حضور الشباب (بدون تكرار)',distinct.size]]));
+    content.append(table(['رقم البصمة','الاسم','الفصل','التاريخ والوقت','الجهاز'],shown,
+      ['USERID','NAME','CLASS_NAME','CHECKTIME','SENSORID']));
+  }
+}
+function csvExport(){
+  if(!shown.length){setMessage('لا توجد بيانات للتصدير.');return;}
+  const keys=view==='home'||view==='classes'?['DEPTID','DEPTNAME','COUNT']:
+    view==='children'?['USERID','NAME','CLASS_NAME','TITLE']:
+    ['USERID','NAME','CLASS_NAME','CHECKTIME','SENSORID'];
+  const headings=view==='home'||view==='classes'?['رقم الفصل','اسم الفصل','عدد الشباب']:
+    view==='children'?['رقم البصمة','الاسم','الفصل','الخادم']:
+    ['رقم البصمة','الاسم','الفصل','التاريخ والوقت','الجهاز'];
+  const esc=v=>'"'+String(v??'').replaceAll('"','""')+'"';
+  const csv='\uFEFF'+[headings,...shown.map(r=>keys.map(k=>r[k]))].map(r=>r.map(esc).join(',')).join('\r\n');
+  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  const a=document.createElement('a');a.href=url;a.download=`خدمة_متوسط_بنين_${view}.csv`;a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+$('loginForm').addEventListener('submit',async e=>{
+  e.preventDefault();if(!sb){setMessage('بيانات Supabase غير مكتملة في config.js');return;}
+  setMessage('جارٍ تسجيل الدخول...');
+  const {error}=await sb.auth.signInWithPassword({email:$('email').value.trim(),password:$('password').value});
+  if(error){setMessage('تعذر تسجيل الدخول؛ راجع البريد الإلكتروني وكلمة المرور.');return;}
+  setMessage('');await enter();
+});
+$('logout').addEventListener('click',async()=>{if(sb)await sb.auth.signOut();roles=[];toggleApp(false);});
 document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>load(b.dataset.view)));
-['search','department','dateFrom','dateTo'].forEach(id=>$(id).addEventListener(id==='search'?'input':'change',applyFilters));
-$('clearFilters').addEventListener('click',()=>{['search','department','dateFrom','dateTo'].forEach(id=>$(id).value='');applyFilters();});
-$('exportCsv').addEventListener('click',exportCsv);
-initialize();
+$('applyFilters').addEventListener('click',filter);
+$('clearFilters').addEventListener('click',()=>{
+  ['search','department','statusFilter','dateFrom','dateTo'].forEach(id=>$(id).value='');filter();
+});
+$('exportCsv').addEventListener('click',csvExport);
+$('printPdf').addEventListener('click',()=>window.print());
+if(sb)enter();else setMessage('قبل البدء، افتح config.js وضع Project URL وPublishable Key.');
