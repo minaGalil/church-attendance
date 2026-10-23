@@ -54,7 +54,7 @@ function ensureSorting(){
 function updateSorting(){
   ensureSorting();
   const wrap=document.querySelector('.sort-controls');if(!wrap)return;
-  wrap.hidden=['users','import'].includes(view);
+  wrap.hidden=['users','import','account'].includes(view);
   const field=document.getElementById('sortField');
   const allowed=['home','classes'].includes(view)?[['DEPTID','رقم الفصل'],['DEPTNAME','اسم الفصل'],['COUNT','عدد الشباب']]:
     view==='children'?[['USERID','رقم البصمة'],['NAME','الاسم'],['CLASS_NAME','الفصل'],['TITLE','الخادم']]:
@@ -147,17 +147,18 @@ async function load(v){
   updateSorting();
   document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===v));
   const names={home:'القائمة الرئيسية - خدمة متوسط بنين',children:'إدارة الشباب',classes:'عرض الفصول - خدمة متوسط بنين',
-    attendance:'سجل الحضور والبصمات',unregistered:'البصمات غير المسجلة',reports:'التقارير',users:'إدارة المستخدمين',import:'استيراد ملف البصمة الأسبوعي'};
+    attendance:'سجل الحضور والبصمات',unregistered:'البصمات غير المسجلة',reports:'التقارير',users:'إدارة المستخدمين',account:'حسابي - تغيير كلمة المرور',import:'استيراد ملف البصمة الأسبوعي'};
   title(names[v]||'خدمة متوسط بنين');
-  $('filterCard').hidden=['users','import'].includes(v);
-  $('exportCsv').hidden=['users','import'].includes(v);
-  $('printPdf').hidden=['users','import'].includes(v);
+  $('filterCard').hidden=['users','import','account'].includes(v);
+  $('exportCsv').hidden=['users','import','account'].includes(v);
+  $('printPdf').hidden=['users','import','account'].includes(v);
   $('department').closest('label').hidden=parent()||v==='unregistered';
-  $('dateFrom').closest('label').hidden=['children','classes','home','users'].includes(v);
-  $('dateTo').closest('label').hidden=['children','classes','home','users'].includes(v);
+  $('dateFrom').closest('label').hidden=['children','classes','home','users','account'].includes(v);
+  $('dateTo').closest('label').hidden=['children','classes','home','users','account'].includes(v);
   $('statusLabel').hidden=!['unregistered'].includes(v);
   try{
     if(v==='import'){note('اختَر ملف DAT لمراجعته قبل الاستيراد.');return;}
+    if(v==='account'){renderAccount();note('يمكنك تغيير كلمة مرور حسابك.');return;}
     if(v==='users'){
       note('إدارة الحسابات تحتاج Secure Admin API؛ لن نعرض أو نعدل حسابات المستخدمين من المتصفح مباشرة.');
       return;
@@ -376,3 +377,120 @@ datUpload.addEventListener('click',async()=>{
     pendingDat=[];datFile.value='';
   }catch(err){datResult.textContent=`توقف الاستيراد بعد حفظ ${inserted} بصمة جديدة. ${err.message}. يمكنك إعادة رفع نفس الملف بدون تكرار.`;datUpload.disabled=false;}
 });
+
+
+// Secure administration: all privileged actions execute inside the Supabase Edge Function.
+async function adminApi(action, payload={}) {
+  if(!admin()) throw new Error('هذه العملية لمدير النظام فقط.');
+  const {data:{session},error:sessionError}=await sb.auth.getSession();
+  if(sessionError || !session?.access_token) throw new Error('انتهت الجلسة. سجل الدخول مرة أخرى.');
+  const response=await fetch(`${SUPABASE_URL.replace(/\/$/,'')}/functions/v1/admin-users`,{
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':`Bearer ${session.access_token}`,'apikey':SUPABASE_PUBLISHABLE_KEY},
+    body:JSON.stringify({action,...payload})
+  });
+  const body=await response.json().catch(()=>({}));
+  if(!response.ok) throw new Error(body.error || `خطأ HTTP ${response.status}`);
+  return body;
+}
+function makeField(label,type='text',required=true){
+  const holder=document.createElement('label');holder.textContent=label;
+  const input=document.createElement('input');input.type=type;input.required=required;
+  holder.append(input);return [holder,input];
+}
+async function renderAdminUsers(){
+  if(!admin())return;
+  const root=$('content');root.replaceChildren();
+  const heading=document.createElement('h3');heading.textContent='إضافة حساب خادم جديد';root.append(heading);
+  const form=document.createElement('form');form.className='youth-form';
+  const [nameBox,name]=makeField('الاسم الكامل');
+  const [emailBox,email]=makeField('البريد الإلكتروني','email');
+  const roleBox=document.createElement('label');roleBox.textContent='المجموعة';
+  const role=document.createElement('select');
+  [['church_admin','Church Admin'],['servant','Servant'],['attendance_manager','Attendance Manager']].forEach(([v,t])=>role.add(new Option(t,v)));
+  roleBox.append(role);form.append(nameBox,emailBox,roleBox);
+  const submit=document.createElement('button');submit.type='submit';submit.textContent='إنشاء الحساب';form.append(submit);
+  const created=document.createElement('p');created.setAttribute('role','status');
+  form.onsubmit=async e=>{
+    e.preventDefault();submit.disabled=true;created.textContent='جارٍ إنشاء الحساب...';
+    try{
+      const result=await adminApi('create',{full_name:name.value.trim(),email:email.value.trim(),role:role.value});
+      created.replaceChildren();
+      const info=document.createElement('strong');info.textContent=`تم إنشاء ${result.email}. كلمة المرور المؤقتة: `;
+      const secret=document.createElement('code');secret.textContent=result.temporary_password;
+      const copy=document.createElement('button');copy.type='button';copy.textContent='نسخ كلمة المرور';copy.onclick=()=>navigator.clipboard.writeText(result.temporary_password);
+      created.append(info,secret,document.createTextNode(' '),copy);
+      form.reset();await loadAdminList(root);
+    }catch(err){created.textContent='تعذر الإنشاء: '+err.message;}
+    finally{submit.disabled=false;}
+  };
+  root.append(form,created);
+  const divider=document.createElement('hr');root.append(divider);
+  const listHeading=document.createElement('h3');listHeading.textContent='الحسابات وإعادة تعيين كلمة المرور';root.append(listHeading);
+  const listArea=document.createElement('div');listArea.id='adminUsersList';root.append(listArea);
+  await loadAdminList(root);
+}
+async function loadAdminList(root){
+  const target=root.querySelector('#adminUsersList');if(!target)return;
+  target.textContent='جارٍ تحميل الحسابات...';
+  try{
+    const {users}=await adminApi('list');target.replaceChildren();
+    const search=document.createElement('input');search.placeholder='بحث بالاسم أو البريد الإلكتروني';
+    search.style.cssText='width:100%;max-width:450px;margin:10px 0;padding:10px;';target.append(search);
+    const rows=document.createElement('div');target.append(rows);
+    const render=()=>{
+      rows.replaceChildren();const q=clean(search.value);
+      const filtered=users.filter(u=>clean(`${u.full_name} ${u.email} ${u.role}`).includes(q));
+      const tbl=document.createElement('table');
+      const th=document.createElement('thead');const hr=document.createElement('tr');
+      ['الاسم','البريد الإلكتروني','المجموعة','الإجراء'].forEach(s=>{const c=document.createElement('th');c.textContent=s;hr.append(c)});
+      th.append(hr);tbl.append(th);const tbody=document.createElement('tbody');
+      filtered.forEach(u=>{
+        const tr=document.createElement('tr');
+        [u.full_name,u.email,u.role].forEach(v=>{const td=document.createElement('td');td.textContent=v||'—';tr.append(td)});
+        const td=document.createElement('td');const btn=document.createElement('button');btn.textContent='Reset Password';btn.className='light';
+        btn.onclick=async()=>{
+          if(!confirm(`تعيين كلمة مرور مؤقتة جديدة للحساب ${u.email}؟`))return;
+          btn.disabled=true;
+          try{
+            const result=await adminApi('reset_password',{user_id:u.id});
+            const box=document.createElement('div');box.style.marginTop='8px';
+            const secret=document.createElement('code');secret.textContent=result.temporary_password;
+            const cp=document.createElement('button');cp.type='button';cp.textContent='نسخ';cp.onclick=()=>navigator.clipboard.writeText(result.temporary_password);
+            box.append(document.createTextNode('كلمة المرور المؤقتة: '),secret,document.createTextNode(' '),cp);
+            td.append(box);
+          }catch(err){alert('تعذر التغيير: '+err.message)}finally{btn.disabled=false;}
+        };
+        td.append(btn);tr.append(td);tbody.append(tr);
+      });tbl.append(tbody);const wrap=document.createElement('div');wrap.className='table-wrap';wrap.append(tbl);rows.append(wrap);
+      note(`عدد الحسابات: ${filtered.length}`);
+    };
+    search.oninput=render;render();
+  }catch(err){target.textContent='تعذر تحميل الحسابات: '+err.message;}
+}
+function renderAccount(){
+  const root=$('content');root.replaceChildren();
+  const form=document.createElement('form');form.className='youth-form';
+  const [currentBox,current]=makeField('كلمة المرور الحالية','password');
+  const [nextBox,next]=makeField('كلمة المرور الجديدة (12 حرفاً على الأقل)','password');
+  const [confirmBox,confirmPassword]=makeField('تأكيد كلمة المرور الجديدة','password');
+  current.autocomplete='current-password';next.autocomplete='new-password';confirmPassword.autocomplete='new-password';
+  next.minLength=12;confirmPassword.minLength=12;
+  const submit=document.createElement('button');submit.textContent='تغيير كلمة المرور';
+  const msg=document.createElement('p');msg.setAttribute('role','status');
+  form.append(currentBox,nextBox,confirmBox,submit,msg);
+  form.onsubmit=async e=>{
+    e.preventDefault();msg.textContent='';
+    if(next.value!==confirmPassword.value){msg.textContent='كلمتا المرور غير متطابقتين.';return;}
+    if(next.value===current.value){msg.textContent='اختر كلمة مرور مختلفة عن الحالية.';return;}
+    submit.disabled=true;
+    try{
+      const {data:{user}}=await sb.auth.getUser();if(!user?.email)throw new Error('تعذر تحديد المستخدم');
+      const {error:verifyError}=await sb.auth.signInWithPassword({email:user.email,password:current.value});
+      if(verifyError)throw new Error('كلمة المرور الحالية غير صحيحة.');
+      const {error}=await sb.auth.updateUser({password:next.value});if(error)throw error;
+      msg.textContent='تم تغيير كلمة المرور بنجاح.';form.reset();
+    }catch(err){msg.textContent='تعذر تغيير كلمة المرور: '+err.message;}
+    finally{submit.disabled=false;}
+  };root.append(form);
+}
