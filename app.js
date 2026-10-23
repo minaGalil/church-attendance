@@ -133,7 +133,7 @@ async function enter(){
   for(const b of document.querySelectorAll('[data-view]')){
     const v=b.dataset.view;
     b.hidden=(['users','classes'].includes(v)&&!admin()&&v==='users') || (v==='classes'&&!admin()&&!churchAdmin()&& !roles.includes('servant')) || (v==='import'&&!attendanceAdmin()) || (v==='unregistered'&&!unregisteredViewer())
-      || (v==='parents'&&!parentManager()) || (parent()&& !['home','attendance','reports','account'].includes(v));
+      || (v==='parents'&&!parentManager()) || (parent()&& !['home','account'].includes(v));
   }
   toggleApp(true);
   await loadDepartments();
@@ -141,15 +141,26 @@ async function enter(){
 }
 async function load(v){
   if(!sb)return;
-  if(parent()&& !['home','attendance','reports','account'].includes(v)){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
+  if(parent()&& !['home','account'].includes(v)){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
   if(((v==='users'&&!admin()) || (v==='parents'&&!parentManager())) || (v==='import'&&!attendanceAdmin()) || (v==='unregistered'&&!unregisteredViewer())){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
   $('datImporter').hidden=v!=='import';view=v;records=[];shown=[];setMessage('');note('جارٍ تحميل البيانات...');
   $('content').replaceChildren();
   updateSorting();
+  if(parent()) {
+    $('filterCard').style.display='none';
+    $('exportCsv').style.display='none';
+    $('printPdf').style.display='none';
+    document.querySelector('.sort-controls')?.style.setProperty('display','none');
+  } else {
+    $('filterCard').style.display='';
+    $('exportCsv').style.display='';
+    $('printPdf').style.display='';
+    document.querySelector('.sort-controls')?.style.removeProperty('display');
+  }
   document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===v));
   const names={home:'القائمة الرئيسية - خدمة متوسط بنين',children:'إدارة الشباب',classes:'عرض الفصول - خدمة متوسط بنين',
     attendance:'سجل الحضور والبصمات',unregistered:'البصمات غير المسجلة',reports:'التقارير',users:'إدارة المستخدمين',parents:'ربط أولياء الأمور بالأبناء',account:'حسابي - تغيير كلمة المرور',import:'استيراد ملف البصمة الأسبوعي'};
-  title(names[v]||'خدمة متوسط بنين');
+  title(parent() && v==='home'?'بوابة ولي الأمر — متابعة حضور الأبناء':names[v]||'خدمة متوسط بنين');
   $('filterCard').hidden=['users','parents','import','account'].includes(v);
   $('exportCsv').hidden=['users','parents','import','account'].includes(v);
   $('printPdf').hidden=['users','parents','import','account'].includes(v);
@@ -569,34 +580,93 @@ async function renderParentPortal(){
   const root=$('content');root.replaceChildren();
   note('جارٍ تحميل بيانات الأبناء...');
   const {children}=await parentApi('my_children');
-  note(`الأبناء المرتبطون بحسابك: ${children.length}`);
+  note('');
   if(!children.length){root.textContent='لا يوجد أبناء مرتبطون بحسابك حتى الآن. تواصل مع مسؤول الخدمة لربط حسابك.';return;}
-  const intro=document.createElement('p');intro.textContent='سجل حضور أبنائك فقط. الأيام بدون بصمة لا تعني غياباً مؤكداً إلا بعد اكتمال رفع الملف.';root.append(intro);
-  for(const child of children){
-    const section=document.createElement('section');section.className='parent-child-card';
-    const heading=document.createElement('h3');heading.textContent=child.name;section.append(heading);
-    const sub=document.createElement('p');sub.textContent=`الفصل: ${child.class_name||'غير محدد'} — رقم البصمة: ${child.user_id}`;section.append(sub);
-    const dates=[...new Set((child.attendance||[]).map(a=>validDate(a.checktime)))].sort().reverse();
-    const count=document.createElement('p');count.textContent=`أيام الحضور المسجلة: ${dates.length}`;section.append(count);
-    const rows=dates.map(day=>({date:day,time:formatChecktime((child.attendance||[]).filter(a=>validDate(a.checktime)===day).map(a=>a.checktime).sort()[0])}));
-    section.append(table(['تاريخ الحضور','أول بصمة'],rows,['date','time']));root.append(section);
+  if(!$('parentPortalStyles')){
+    const css=document.createElement('style');css.id='parentPortalStyles';
+    css.textContent=`
+      .parent-portal{direction:rtl;text-align:right;max-width:1050px;margin:auto;color:#073e35}
+      .parent-welcome{font-size:1.05rem;color:#47655f;margin:0 0 18px}
+      .parent-card{background:#fff;border:1px solid #dce9e3;border-radius:18px;padding:20px;margin:0 0 20px;box-shadow:0 4px 20px #073e350d}
+      .parent-card h3{font-size:1.35rem;margin:0 0 6px;color:#064d3f}
+      .parent-muted{color:#59766f;font-size:.94rem;margin:0 0 16px}
+      .parent-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0}
+      .parent-stat{background:#edf6f1;padding:16px;border-radius:12px;display:flex;flex-direction:column;gap:8px}
+      .parent-stat strong{font-size:1.35rem;color:#00583f}
+      .parent-table{width:100%;border-collapse:collapse;min-width:0}
+      .parent-table th,.parent-table td{padding:13px 10px;border-bottom:1px solid #e3ede8;text-align:right}
+      .parent-table th{background:#e8f2ed}
+      .parent-empty{background:#f7faf8;border-radius:10px;padding:15px}
+      .parent-help{font-size:.9rem;color:#5c6f69;line-height:1.8}
+      @media(max-width:600px){.parent-card{padding:14px}.parent-stats{gap:8px}.parent-stat{padding:12px}.parent-card h3{font-size:1.2rem}.parent-table th,.parent-table td{padding:11px 6px;font-size:.9rem}}
+    `;document.head.append(css);
   }
+  const page=document.createElement('div');page.className='parent-portal';root.append(page);
+  const welcome=document.createElement('p');welcome.className='parent-welcome';welcome.textContent='أهلاً بك في خدمة متوسط بنين — تابع حضور أبنائك بسهولة.';page.append(welcome);
+  for(const child of children){
+    const card=document.createElement('section');card.className='parent-card';page.append(card);
+    const heading=document.createElement('h3');heading.textContent=child.name||'الابن';card.append(heading);
+    const meta=document.createElement('p');meta.className='parent-muted';meta.textContent=`الفصل: ${child.class_name||'غير محدد'}`;card.append(meta);
+    const earliest=new Map();
+    for(const item of child.attendance||[]){
+      const time=String(item.checktime||'');const day=validDate(time);
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(day))continue;
+      if(!earliest.has(day)||time<earliest.get(day))earliest.set(day,time);
+    }
+    const dates=[...earliest.keys()].sort().reverse();
+    const stats=document.createElement('div');stats.className='parent-stats';card.append(stats);
+    for(const [label,value] of [['أيام الحضور المسجلة',String(dates.length)],['آخر حضور',dates[0]||'لا يوجد بعد']]){
+      const box=document.createElement('div');box.className='parent-stat';
+      const caption=document.createElement('span');caption.textContent=label;
+      const number=document.createElement('strong');number.textContent=value;
+      box.append(caption,number);stats.append(box);
+    }
+    const sub=document.createElement('h4');sub.textContent='سجل الحضور';card.append(sub);
+    if(!dates.length){const empty=document.createElement('p');empty.className='parent-empty';empty.textContent='لا توجد بصمات حضور مسجلة حتى الآن.';card.append(empty);continue;}
+    const rows=dates.map(day=>({date:day,time:formatChecktime(earliest.get(day)).split('   ').pop()}));
+    const tbl=table(['تاريخ الحضور','أول بصمة'],rows,['date','time']);
+    tbl.querySelector('table')?.classList.add('parent-table');card.append(tbl);
+  }
+  const help=document.createElement('p');help.className='parent-help';help.textContent='ملحوظة: عدم وجود بصمة في يوم معين لا يعني غياباً مؤكداً إلا بعد اكتمال رفع ملف الحضور. للاستفسار تواصل مع مسؤول الخدمة.';page.append(help);
+}
+function validateParentPassword(password){
+  if(password.length<10 || password.length>72 || !/[A-Za-z]/.test(password) || !/[0-9]/.test(password))
+    throw new Error('كلمة المرور لازم تكون من 10 إلى 72 حرفاً وتحتوي على حرف إنجليزي ورقم على الأقل. مثال للتوضيح فقط: Church2026Test');
+}
+function passwordVisibility(input, container){
+  const toggle=document.createElement('button');toggle.type='button';toggle.className='light';
+  toggle.textContent='إظهار كلمة المرور';
+  toggle.onclick=()=>{input.type=input.type==='password'?'text':'password';toggle.textContent=input.type==='password'?'إظهار كلمة المرور':'إخفاء كلمة المرور';};
+  container.append(toggle);
 }
 async function renderParentManagement(){
   if(!parentManager())throw new Error('ليس لديك صلاحية إدارة أولياء الأمور.');
   const root=$('content');root.replaceChildren();
   const heading=document.createElement('h3');heading.textContent='إنشاء حساب ولي أمر وربط الأبناء';root.append(heading);
   const form=document.createElement('form');form.className='youth-form';
-  const [nameBox,name]=makeField('اسم ولي الأمر');const [emailBox,email]=makeField('البريد الإلكتروني','email');
-  const [passwordBox, parentPassword]=makeField('كلمة مرور لولي الأمر (10 أحرف على الأقل، حروف وأرقام)','text');
-  parentPassword.autocomplete='off';parentPassword.minLength=10;parentPassword.required=true;
+  const [nameBox,name]=makeField('اسم ولي الأمر');const [emailBox,email]=makeField('البريد الإلكتروني (يمكن استخدام عنوان تجريبي)','email');
+  const [passwordBox,parentPassword]=makeField('كلمة مرور ولي الأمر (10–72 حرفاً، حروف إنجليزية وأرقام)','password');
+  parentPassword.autocomplete='new-password';parentPassword.minLength=10;parentPassword.maxLength=72;
+  passwordVisibility(parentPassword,passwordBox);
+  const [confirmBox,confirmPassword]=makeField('تأكيد كلمة المرور','password');
+  confirmPassword.autocomplete='new-password';confirmPassword.minLength=10;confirmPassword.maxLength=72;
+  const help=document.createElement('p');help.className='dash-help';
+  help.textContent='مثال توضيحي فقط: Church2026Test — استخدم كلمة مختلفة لكل ولي أمر. البريد التجريبي لا يستقبل رسائل استعادة الحساب.';
   const create=document.createElement('button');create.type='submit';create.textContent='إنشاء حساب ولي أمر';
-  const result=document.createElement('p');result.setAttribute('role','status');form.append(nameBox,emailBox,passwordBox,create,result);root.append(form);
-  form.onsubmit=async e=>{e.preventDefault();create.disabled=true;result.textContent='جارٍ الإنشاء...';try{
-    const r=await parentApi('create_parent',{full_name:name.value.trim(),email:email.value.trim(),password:parentPassword.value});
-    result.textContent=`تم إنشاء وتفعيل الحساب: ${r.email}. يمكن تسجيل الدخول بكلمة المرور التي حددتها. لا تشاركها علناً.`;parentPassword.value='';
-    await loadLinks();
-  }catch(err){result.textContent='خطأ: '+err.message;}finally{create.disabled=false;}};
+  const result=document.createElement('p');result.setAttribute('role','status');
+  form.append(nameBox,emailBox,passwordBox,confirmBox,help,create,result);root.append(form);
+  form.onsubmit=async e=>{
+    e.preventDefault();result.textContent='';
+    try{
+      validateParentPassword(parentPassword.value);
+      if(parentPassword.value!==confirmPassword.value)throw new Error('تأكيد كلمة المرور غير مطابق.');
+      create.disabled=true;result.textContent='جارٍ الإنشاء...';
+      const r=await parentApi('create_parent',{full_name:name.value.trim(),email:email.value.trim(),password:parentPassword.value});
+      result.textContent=`تم إنشاء وتفعيل الحساب: ${r.email}. يمكن تسجيل الدخول بكلمة المرور المحددة.`;
+      parentPassword.value='';confirmPassword.value='';
+      await loadLinks();
+    }catch(err){result.textContent='خطأ: '+err.message;}finally{create.disabled=false;}
+  };
   const linkTitle=document.createElement('h3');linkTitle.textContent='ربط ابن بحساب ولي أمر';root.append(linkTitle);
   const linkForm=document.createElement('form');linkForm.className='youth-form';
   const [parentBox,parentEmail]=makeField('بريد ولي الأمر','email');const [childBox,childId]=makeField('رقم بصمة الشاب','number');
@@ -611,15 +681,24 @@ async function renderParentManagement(){
   const resetTitle=document.createElement('h3');resetTitle.textContent='تفعيل حساب ولي أمر أو تغيير كلمة مروره';root.append(resetTitle);
   const resetForm=document.createElement('form');resetForm.className='youth-form';
   const [resetEmailBox,resetEmail]=makeField('بريد ولي الأمر','email');
-  const [resetPassBox,resetPass]=makeField('كلمة المرور الجديدة (10 أحرف على الأقل، حروف وأرقام)','text');
-  resetPass.autocomplete='off';resetPass.minLength=10;
+  const [resetPassBox,resetPass]=makeField('كلمة المرور الجديدة (10–72 حرفاً، حروف إنجليزية وأرقام)','password');
+  resetPass.autocomplete='new-password';resetPass.minLength=10;resetPass.maxLength=72;
+  passwordVisibility(resetPass,resetPassBox);
+  const [resetConfirmBox,resetConfirm]=makeField('تأكيد كلمة المرور الجديدة','password');
+  resetConfirm.autocomplete='new-password';resetConfirm.minLength=10;resetConfirm.maxLength=72;
   const resetButton=document.createElement('button');resetButton.type='submit';resetButton.textContent='تغيير كلمة المرور وتفعيل الحساب';
   const resetFeedback=document.createElement('p');resetFeedback.setAttribute('role','status');
-  resetForm.append(resetEmailBox,resetPassBox,resetButton,resetFeedback);root.append(resetForm);
-  resetForm.onsubmit=async e=>{e.preventDefault();resetButton.disabled=true;try{
-    await parentApi('reset_parent_password',{parent_email:resetEmail.value.trim(),password:resetPass.value});
-    resetFeedback.textContent='تم تغيير كلمة المرور وتفعيل الحساب.';resetPass.value='';
-  }catch(err){resetFeedback.textContent='تعذر التغيير: '+err.message;}finally{resetButton.disabled=false;}};
+  resetForm.append(resetEmailBox,resetPassBox,resetConfirmBox,resetButton,resetFeedback);root.append(resetForm);
+  resetForm.onsubmit=async e=>{
+    e.preventDefault();resetFeedback.textContent='';
+    try{
+      validateParentPassword(resetPass.value);
+      if(resetPass.value!==resetConfirm.value)throw new Error('تأكيد كلمة المرور غير مطابق.');
+      resetButton.disabled=true;resetFeedback.textContent='جارٍ التغيير...';
+      await parentApi('reset_parent_password',{parent_email:resetEmail.value.trim(),password:resetPass.value});
+      resetFeedback.textContent='تم تغيير كلمة المرور وتفعيل الحساب.';resetPass.value='';resetConfirm.value='';
+    }catch(err){resetFeedback.textContent='تعذر التغيير: '+err.message;}finally{resetButton.disabled=false;}
+  };
   const list=document.createElement('div');root.append(list);
   async function loadLinks(){list.textContent='جارٍ تحميل الروابط...';try{
     const {links}=await parentApi('list_links');list.replaceChildren();
