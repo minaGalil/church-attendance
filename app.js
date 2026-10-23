@@ -132,7 +132,7 @@ async function enter(){
   for(const b of document.querySelectorAll('[data-view]')){
     const v=b.dataset.view;
     b.hidden=(['users','classes'].includes(v)&&!admin()&&v==='users') || (v==='classes'&&!admin()&&!churchAdmin()&& !roles.includes('servant')) || (v==='import'&&!attendanceAdmin()) || (v==='unregistered'&&!unregisteredViewer())
-      || (parent()&&['children','classes','users','unregistered','import'].includes(v));
+      || (v==='parents'&&!admin()) || (parent()&& !['home','attendance','reports','account'].includes(v));
   }
   toggleApp(true);
   await loadDepartments();
@@ -140,23 +140,25 @@ async function enter(){
 }
 async function load(v){
   if(!sb)return;
-  if(parent()&&['children','classes','users','unregistered','import'].includes(v)){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
-  if((v==='users'&&!admin()) || (v==='import'&&!attendanceAdmin()) || (v==='unregistered'&&!unregisteredViewer())){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
+  if(parent()&& !['home','attendance','reports','account'].includes(v)){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
+  if((['users','parents'].includes(v)&&!admin()) || (v==='import'&&!attendanceAdmin()) || (v==='unregistered'&&!unregisteredViewer())){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
   $('datImporter').hidden=v!=='import';view=v;records=[];shown=[];setMessage('');note('جارٍ تحميل البيانات...');
   $('content').replaceChildren();
   updateSorting();
   document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===v));
   const names={home:'القائمة الرئيسية - خدمة متوسط بنين',children:'إدارة الشباب',classes:'عرض الفصول - خدمة متوسط بنين',
-    attendance:'سجل الحضور والبصمات',unregistered:'البصمات غير المسجلة',reports:'التقارير',users:'إدارة المستخدمين',account:'حسابي - تغيير كلمة المرور',import:'استيراد ملف البصمة الأسبوعي'};
+    attendance:'سجل الحضور والبصمات',unregistered:'البصمات غير المسجلة',reports:'التقارير',users:'إدارة المستخدمين',parents:'ربط أولياء الأمور بالأبناء',account:'حسابي - تغيير كلمة المرور',import:'استيراد ملف البصمة الأسبوعي'};
   title(names[v]||'خدمة متوسط بنين');
-  $('filterCard').hidden=['users','import','account'].includes(v);
-  $('exportCsv').hidden=['users','import','account'].includes(v);
-  $('printPdf').hidden=['users','import','account'].includes(v);
+  $('filterCard').hidden=['users','parents','import','account'].includes(v);
+  $('exportCsv').hidden=['users','parents','import','account'].includes(v);
+  $('printPdf').hidden=['users','parents','import','account'].includes(v);
   $('department').closest('label').hidden=parent()||v==='unregistered';
-  $('dateFrom').closest('label').hidden=['children','classes','home','users','account'].includes(v);
-  $('dateTo').closest('label').hidden=['children','classes','home','users','account'].includes(v);
+  $('dateFrom').closest('label').hidden=['children','classes','home','users','parents','account'].includes(v);
+  $('dateTo').closest('label').hidden=['children','classes','home','users','parents','account'].includes(v);
   $('statusLabel').hidden=!['unregistered'].includes(v);
   try{
+    if(parent() && ['home','attendance','reports'].includes(v)){await renderParentPortal();return;}
+    if(v==='parents'){await renderParentManagement();return;}
     if(v==='import'){note('اختَر ملف DAT لمراجعته قبل الاستيراد.');return;}
     if(v==='home' && !parent()){await renderDashboard();return;}
     if(v==='account'){renderAccount();note('يمكنك تغيير كلمة مرور حسابك.');return;}
@@ -547,4 +549,72 @@ async function renderDashboard(){
     note(`لوحة متابعة أسبوع ${target} — ${attended} حاضر من ${total} شاب مسجل`);
   };
   week.addEventListener('change',draw);draw();
+}
+
+
+// Parent portal: private data is returned ONLY by the server after checking the session.
+async function parentApi(action, payload={}){
+  const {data:{session},error}=await sb.auth.getSession();
+  if(error || !session?.access_token) throw new Error('يرجى تسجيل الدخول مجدداً.');
+  const response=await fetch(`${SUPABASE_URL.replace(/\/$/,'')}/functions/v1/parent-portal`,{
+    method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${session.access_token}`,'apikey':SUPABASE_PUBLISHABLE_KEY},
+    body:JSON.stringify({action,...payload})
+  });
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(data.error||`HTTP ${response.status}`);
+  return data;
+}
+async function renderParentPortal(){
+  const root=$('content');root.replaceChildren();
+  note('جارٍ تحميل بيانات الأبناء...');
+  const {children}=await parentApi('my_children');
+  note(`الأبناء المرتبطون بحسابك: ${children.length}`);
+  if(!children.length){root.textContent='لا يوجد أبناء مرتبطون بحسابك حتى الآن. تواصل مع مسؤول الخدمة لربط حسابك.';return;}
+  const intro=document.createElement('p');intro.textContent='سجل حضور أبنائك فقط. الأيام بدون بصمة لا تعني غياباً مؤكداً إلا بعد اكتمال رفع الملف.';root.append(intro);
+  for(const child of children){
+    const section=document.createElement('section');section.className='parent-child-card';
+    const heading=document.createElement('h3');heading.textContent=child.name;section.append(heading);
+    const sub=document.createElement('p');sub.textContent=`الفصل: ${child.class_name||'غير محدد'} — رقم البصمة: ${child.user_id}`;section.append(sub);
+    const dates=[...new Set((child.attendance||[]).map(a=>validDate(a.checktime)))].sort().reverse();
+    const count=document.createElement('p');count.textContent=`أيام الحضور المسجلة: ${dates.length}`;section.append(count);
+    const rows=dates.map(day=>({date:day,time:formatChecktime((child.attendance||[]).filter(a=>validDate(a.checktime)===day).map(a=>a.checktime).sort()[0])}));
+    section.append(table(['تاريخ الحضور','أول بصمة'],rows,['date','time']));root.append(section);
+  }
+}
+async function renderParentManagement(){
+  if(!admin())throw new Error('هذه الصفحة لمدير النظام فقط.');
+  const root=$('content');root.replaceChildren();
+  const heading=document.createElement('h3');heading.textContent='إنشاء حساب ولي أمر وربط الأبناء';root.append(heading);
+  const form=document.createElement('form');form.className='youth-form';
+  const [nameBox,name]=makeField('اسم ولي الأمر');const [emailBox,email]=makeField('البريد الإلكتروني','email');
+  const create=document.createElement('button');create.type='submit';create.textContent='إنشاء حساب ولي أمر';
+  const result=document.createElement('p');result.setAttribute('role','status');form.append(nameBox,emailBox,create,result);root.append(form);
+  form.onsubmit=async e=>{e.preventDefault();create.disabled=true;result.textContent='جارٍ الإنشاء...';try{
+    const r=await parentApi('create_parent',{full_name:name.value.trim(),email:email.value.trim()});
+    result.textContent=`تم إنشاء الحساب: ${r.email} — كلمة المرور المؤقتة: ${r.temporary_password} (انسخها الآن، ولا تشاركها علناً)`;
+    await loadLinks();
+  }catch(err){result.textContent='خطأ: '+err.message;}finally{create.disabled=false;}};
+  const linkTitle=document.createElement('h3');linkTitle.textContent='ربط ابن بحساب ولي أمر';root.append(linkTitle);
+  const linkForm=document.createElement('form');linkForm.className='youth-form';
+  const [parentBox,parentEmail]=makeField('بريد ولي الأمر','email');const [childBox,childId]=makeField('رقم بصمة الشاب','number');
+  const relationshipBox=document.createElement('label');relationshipBox.textContent='صلة القرابة';const relationship=document.createElement('select');
+  [['father','الأب'],['mother','الأم'],['guardian','ولي أمر']].forEach(([v,l])=>relationship.add(new Option(l,v)));relationshipBox.append(relationship);
+  const link=document.createElement('button');link.type='submit';link.textContent='ربط الابن';const feedback=document.createElement('p');
+  linkForm.append(parentBox,childBox,relationshipBox,link,feedback);root.append(linkForm);
+  linkForm.onsubmit=async e=>{e.preventDefault();link.disabled=true;try{
+    await parentApi('link_child',{parent_email:parentEmail.value.trim(),user_id:Number(childId.value),relationship:relationship.value});
+    feedback.textContent='تم الربط بنجاح.';await loadLinks();
+  }catch(err){feedback.textContent='تعذر الربط: '+err.message;}finally{link.disabled=false;}};
+  const list=document.createElement('div');root.append(list);
+  async function loadLinks(){list.textContent='جارٍ تحميل الروابط...';try{
+    const {links}=await parentApi('list_links');list.replaceChildren();
+    const rows=links.map(l=>({email:l.email,name:l.name,child:l.child_name,user_id:l.user_id,relationship:l.relationship}));
+    list.append(table(['بريد ولي الأمر','الاسم','الشاب','رقم البصمة','صلة القرابة'],rows,['email','name','child','user_id','relationship']));
+    for(const [i,l] of links.entries()){
+      const tr=list.querySelectorAll('tbody tr')[i];const td=document.createElement('td');const btn=document.createElement('button');btn.className='light';btn.textContent='إلغاء الربط';
+      btn.onclick=async()=>{if(!confirm('هل تريد إلغاء ربط هذا الابن؟'))return;btn.disabled=true;try{await parentApi('unlink_child',{parent_id:l.parent_id,user_id:l.user_id});await loadLinks();}catch(e){alert(e.message);btn.disabled=false;}};
+      td.append(btn);tr.append(td);
+    }
+  }catch(err){list.textContent='تعذر تحميل الروابط: '+err.message;}}
+  await loadLinks();
 }
