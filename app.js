@@ -7,8 +7,10 @@ const configured = SUPABASE_URL.startsWith('https://') && !SUPABASE_URL.includes
   && !SUPABASE_PUBLISHABLE_KEY.includes('YOUR_');
 const sb = configured ? createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY) : null;
 let roles=[], view='home', records=[], shown=[], deptMap=new Map(), youthMap=new Map();
-const admin = () => roles.some(x=>['super_admin','church_admin'].includes(x));
-const attendanceAdmin = () => roles.some(x=>['super_admin','church_admin','attendance_manager'].includes(x));
+const admin = () => roles.includes('super_admin');
+const churchAdmin = () => roles.includes('church_admin');
+const attendanceAdmin = () => roles.some(x=>['super_admin','attendance_manager'].includes(x));
+const unregisteredViewer = () => roles.some(x=>['super_admin','church_admin','attendance_manager'].includes(x));
 const youthEditor = () => roles.some(x=>['super_admin','church_admin','servant'].includes(x));
 const parent = () => roles.includes('parent') && !roles.some(x=>x!=='parent');
 const setMessage = text => $('message').textContent = text || '';
@@ -126,10 +128,10 @@ async function enter(){
   }
   roles=rs.map(r=>r.ROLE);
   $('who').textContent=account.FULL_NAME||user.email;
-  $('roleLabel').textContent=admin()?'مدير النظام':roles.includes('servant')?'خادم':roles.includes('attendance_manager')?'مسؤول الحضور':'ولي أمر';
+  $('roleLabel').textContent=admin()?'مدير النظام':churchAdmin()?'مسؤول الخدمة':roles.includes('servant')?'خادم':roles.includes('attendance_manager')?'مسؤول الحضور':'ولي أمر';
   for(const b of document.querySelectorAll('[data-view]')){
     const v=b.dataset.view;
-    b.hidden=(v==='users'&&!admin()) || (['unregistered','import'].includes(v)&&!attendanceAdmin())
+    b.hidden=(['users','classes'].includes(v)&&!admin()&&v==='users') || (v==='classes'&&!admin()&&!churchAdmin()&& !roles.includes('servant')) || (v==='import'&&!attendanceAdmin()) || (v==='unregistered'&&!unregisteredViewer())
       || (parent()&&['children','classes','users','unregistered','import'].includes(v));
   }
   toggleApp(true);
@@ -139,12 +141,12 @@ async function enter(){
 async function load(v){
   if(!sb)return;
   if(parent()&&['children','classes','users','unregistered','import'].includes(v)){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
-  if(v==='users'&&!admin() || ['unregistered','import'].includes(v)&&!attendanceAdmin()){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
+  if((v==='users'&&!admin()) || (v==='import'&&!attendanceAdmin()) || (v==='unregistered'&&!unregisteredViewer())){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
   $('datImporter').hidden=v!=='import';view=v;records=[];shown=[];setMessage('');note('جارٍ تحميل البيانات...');
   $('content').replaceChildren();
   updateSorting();
   document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===v));
-  const names={home:'القائمة الرئيسية - خدمة متوسط بنين',children:'إدارة الشباب',classes:'قائمة الفصول - خدمة متوسط بنين',
+  const names={home:'القائمة الرئيسية - خدمة متوسط بنين',children:'إدارة الشباب',classes:'عرض الفصول - خدمة متوسط بنين',
     attendance:'سجل الحضور والبصمات',unregistered:'البصمات غير المسجلة',reports:'التقارير',users:'إدارة المستخدمين',import:'استيراد ملف البصمة الأسبوعي'};
   title(names[v]||'خدمة متوسط بنين');
   $('filterCard').hidden=['users','import'].includes(v);
