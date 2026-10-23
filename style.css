@@ -3,3 +3,5 @@
 /* شعار الكنيسة يمين البانر وشعار الخدمة يساره */
 .church-logo{right:2%;top:5%;width:clamp(60px,7vw,130px);max-height:48%;background:rgba(0,45,36,.83);border:1px solid rgba(229,190,105,.6);padding:7px}
 [hidden]{display:none!important}
+
+.add-youth{margin:8px 0 18px}dialog{border:0;border-radius:16px;max-width:740px;width:min(94vw,740px);max-height:90vh;overflow:auto;padding:26px;box-shadow:0 12px 50px #1236}dialog::backdrop{background:#001b1788}.youth-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.youth-form label{display:grid;gap:6px;font-weight:bold;font-size:13px}.dialog-actions{display:flex;gap:10px;margin-top:20px}#youthFeedback{color:#aa332e}@media(max-width:600px){.youth-form{grid-template-columns:1fr}}@media print{dialog,.add-youth{display:none!important}}

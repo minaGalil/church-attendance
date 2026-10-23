@@ -9,6 +9,7 @@ const sb = configured ? createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY) : n
 let roles=[], view='home', records=[], shown=[], deptMap=new Map(), youthMap=new Map();
 const admin = () => roles.some(x=>['super_admin','church_admin'].includes(x));
 const attendanceAdmin = () => roles.some(x=>['super_admin','church_admin','attendance_manager'].includes(x));
+const youthEditor = () => roles.some(x=>['super_admin','church_admin','servant'].includes(x));
 const parent = () => roles.includes('parent') && !roles.some(x=>x!=='parent');
 const setMessage = text => $('message').textContent = text || '';
 const note = text => $('notice').textContent = text || '';
@@ -162,12 +163,15 @@ function filter(){
   }
   const content=$('content');content.replaceChildren();
   note(`عدد النتائج: ${shown.length}${records.length>=10000?' (أول 10000 سجل فقط)':''}`);
+  if(view==='children' && youthEditor()){const b=document.createElement('button');b.textContent='＋ إضافة شاب جديد';b.className='add-youth';b.onclick=()=>openYouth();content.append(b);}
   if(!shown.length){const p=document.createElement('p');p.className='empty';p.textContent='لا توجد نتائج مطابقة.';content.append(p);return;}
   if(view==='home'||view==='classes'){
     content.append(summary([['عدد الفصول',shown.length],['إجمالي الشباب',shown.reduce((s,r)=>s+r.COUNT,0)]]));
     content.append(table(['رقم الفصل','اسم الفصل','عدد الشباب'],shown,['DEPTID','DEPTNAME','COUNT']));
   }else if(view==='children'){
-    content.append(table(['رقم البصمة','اسم الشاب','اسم الفصل','الخادم'],shown,['USERID','NAME','CLASS_NAME','TITLE']));
+    const t=table(['رقم البصمة','اسم الشاب','اسم الفصل','الخادم',...(youthEditor()?['الإجراءات']:[])],shown,['USERID','NAME','CLASS_NAME','TITLE']);
+    if(youthEditor()) t.querySelectorAll('tbody tr').forEach((tr,i)=>{const td=document.createElement('td');const b=document.createElement('button');b.textContent='تعديل';b.className='light';b.onclick=()=>openYouth(shown[i].USERID);td.append(b);tr.append(td);});
+    content.append(t);
   }else if(view==='unregistered'){
     const byUser=new Map();
     shown.forEach(p=>{
@@ -216,3 +220,46 @@ $('clearFilters').addEventListener('click',()=>{
 $('exportCsv').addEventListener('click',csvExport);
 $('printPdf').addEventListener('click',()=>window.print());
 if(sb)enter();else setMessage('قبل البدء، افتح config.js وضع Project URL وPublishable Key.');
+
+const youthFields=[['USERID','رقم البصمة','number'],['NAME','اسم الشاب','text'],['DEFAULTDEPTID','الفصل','select'],
+ ['TITLE','الخادم','text'],['GENDER','وظيفة الأب','text'],['BIRTHDAY','تاريخ الميلاد','date'],
+ ['PAGER','هاتف الأب','tel'],['OPHONE','هاتف الأم','tel'],['FPHONE','هاتف الشاب','tel'],
+ ['STREET','العنوان','text'],['CITY','المدينة','text'],['STATE','المنطقة','text']];
+async function openYouth(id=null){
+ if(!youthEditor())return;
+ const dlg=$('youthDialog'),form=$('youthForm');form.replaceChildren();
+ $('youthHeading').textContent=id?'تعديل بيانات الشاب':'إضافة شاب جديد';
+ $('youthFeedback').textContent='';
+ let data={};
+ if(id){
+  const {data:details,error}=await sb.rpc('get_youth_for_edit',{p_userid:id});
+  if(error){setMessage('تعذر فتح بيانات الشاب: '+error.message);return;}
+  data=details||{};
+ }
+ for(const [field,label,type] of youthFields){
+  const wrap=document.createElement('label');wrap.textContent=label;
+  let control;
+  if(type==='select'){
+   control=document.createElement('select');control.add(new Option('اختر الفصل',''));
+   for(const [key,name] of deptMap)if(key!==1)control.add(new Option(name,String(key)));
+  }else{control=document.createElement('input');control.type=type;}
+  control.name=field;control.value=data[field]??'';
+  if(field==='BIRTHDAY')control.value=String(data[field]||'').slice(0,10);
+  if(field==='USERID'&&id)control.readOnly=true;
+  if(['USERID','NAME','DEFAULTDEPTID'].includes(field))control.required=true;
+  wrap.append(control);form.append(wrap);
+ }
+ dlg.showModal();
+}
+$('youthCancel').addEventListener('click',()=>$('youthDialog').close());
+$('youthForm').addEventListener('submit',async e=>{
+ e.preventDefault();if(!youthEditor())return;
+ const data=Object.fromEntries(new FormData(e.currentTarget).entries());
+ const btn=$('youthSave');btn.disabled=true;$('youthFeedback').textContent='جارٍ الحفظ...';
+ try{
+  const {error}=await sb.rpc('manage_youth',{p_data:data});
+  if(error)throw error;
+  $('youthDialog').close();await load('children');setMessage('تم حفظ بيانات الشاب بنجاح.');
+ }catch(err){$('youthFeedback').textContent='تعذر الحفظ: '+(err.message||'خطأ غير معروف');}
+ finally{btn.disabled=false;}
+});
