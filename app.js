@@ -83,8 +83,8 @@ async function enter(){
   $('roleLabel').textContent=admin()?'مدير النظام':roles.includes('servant')?'خادم':roles.includes('attendance_manager')?'مسؤول الحضور':'ولي أمر';
   for(const b of document.querySelectorAll('[data-view]')){
     const v=b.dataset.view;
-    b.hidden=(v==='users'&&!admin()) || (v==='unregistered'&&!attendanceAdmin())
-      || (parent()&&['children','classes','users','unregistered'].includes(v));
+    b.hidden=(v==='users'&&!admin()) || (['unregistered','import'].includes(v)&&!attendanceAdmin())
+      || (parent()&&['children','classes','users','unregistered','import'].includes(v));
   }
   toggleApp(true);
   await loadDepartments();
@@ -92,22 +92,23 @@ async function enter(){
 }
 async function load(v){
   if(!sb)return;
-  if(parent()&&['children','classes','users','unregistered'].includes(v)){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
-  if(v==='users'&&!admin() || v==='unregistered'&&!attendanceAdmin()){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
-  view=v;records=[];shown=[];setMessage('');note('جارٍ تحميل البيانات...');
+  if(parent()&&['children','classes','users','unregistered','import'].includes(v)){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
+  if(v==='users'&&!admin() || ['unregistered','import'].includes(v)&&!attendanceAdmin()){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
+  $('datImporter').hidden=v!=='import';view=v;records=[];shown=[];setMessage('');note('جارٍ تحميل البيانات...');
   $('content').replaceChildren();
   document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===v));
   const names={home:'القائمة الرئيسية - خدمة متوسط بنين',children:'إدارة الشباب',classes:'قائمة الفصول - خدمة متوسط بنين',
-    attendance:'سجل الحضور والبصمات',unregistered:'البصمات غير المسجلة',reports:'التقارير',users:'إدارة المستخدمين'};
+    attendance:'سجل الحضور والبصمات',unregistered:'البصمات غير المسجلة',reports:'التقارير',users:'إدارة المستخدمين',import:'استيراد ملف البصمة الأسبوعي'};
   title(names[v]||'خدمة متوسط بنين');
-  $('filterCard').hidden=v==='users';
-  $('exportCsv').hidden=v==='users';
-  $('printPdf').hidden=v==='users';
+  $('filterCard').hidden=['users','import'].includes(v);
+  $('exportCsv').hidden=['users','import'].includes(v);
+  $('printPdf').hidden=['users','import'].includes(v);
   $('department').closest('label').hidden=parent()||v==='unregistered';
   $('dateFrom').closest('label').hidden=['children','classes','home','users'].includes(v);
   $('dateTo').closest('label').hidden=['children','classes','home','users'].includes(v);
   $('statusLabel').hidden=!['unregistered'].includes(v);
   try{
+    if(v==='import'){note('اختَر ملف DAT لمراجعته قبل الاستيراد.');return;}
     if(v==='users'){
       note('إدارة الحسابات تحتاج Secure Admin API؛ لن نعرض أو نعدل حسابات المستخدمين من المتصفح مباشرة.');
       return;
@@ -262,4 +263,66 @@ $('youthForm').addEventListener('submit',async e=>{
   $('youthDialog').close();await load('children');setMessage('تم حفظ بيانات الشاب بنجاح.');
  }catch(err){$('youthFeedback').textContent='تعذر الحفظ: '+(err.message||'خطأ غير معروف');}
  finally{btn.disabled=false;}
+});
+
+
+// Weekly biometric-device DAT import: parse locally; server validates again.
+let pendingDat=[];
+const datFile=$('datFile'),datPreview=$('datPreview'),datResult=$('datResult'),datUpload=$('datUpload');
+function datNumber(s,optional=false){
+  const v=String(s??'').trim();
+  if(optional&&v==='')return null;
+  if(!/^\d{1,9}$/.test(v))throw new Error('رقم غير صحيح في ملف DAT');
+  return Number(v);
+}
+function parseDat(text){
+  const rows=[];const invalid=[];const seen=new Set();let duplicateFile=0;
+  text.replace(/^\uFEFF/,'').split(/\r?\n/).forEach((raw,index)=>{
+    const line=raw.trim();if(!line)return;
+    const fields=line.split(/\t+/);
+    if(fields.length!==6){invalid.push(index+1);return;}
+    try{
+      const uid=datNumber(fields[0]);
+      const stamp=fields[1].trim();
+      if(uid<=0||!/^\d{4}-\d\d-\d\d[ T]\d\d:\d\d:\d\d(?:\.\d{1,6})?$/.test(stamp))throw Error();
+      const iso=stamp.replace('T',' ');
+      const d=new Date(stamp.replace(' ','T'));
+      if(Number.isNaN(d.getTime())||d.getFullYear()!==Number(stamp.slice(0,4))||d.getMonth()+1!==Number(stamp.slice(5,7))||d.getDate()!==Number(stamp.slice(8,10)))throw Error();
+      const sensor=datNumber(fields[2],true);
+      const checktype=fields[3].trim();
+      if(checktype.length>30)throw Error();
+      const verify=datNumber(fields[4],true),work=datNumber(fields[5],true);
+      const key=`${uid}|${iso}|${sensor??''}`;
+      if(seen.has(key)){duplicateFile++;return;}seen.add(key);
+      rows.push({USERID:uid,CHECKTIME:iso,SENSORID:sensor,CHECKTYPE:checktype||null,VERIFYCODE:verify,WorkCode:work});
+    }catch{invalid.push(index+1)}
+  });
+  return {rows,invalid,duplicateFile};
+}
+datFile.addEventListener('change',async()=>{
+  pendingDat=[];datUpload.disabled=true;datResult.textContent='';datPreview.textContent='';
+  const file=datFile.files?.[0];if(!file)return;
+  if(!/\.(dat|txt)$/i.test(file.name)||file.size>5*1024*1024){datPreview.textContent='اختر ملف DAT أو TXT حجمه أقل من 5 MB.';return;}
+  try{
+    const parsed=parseDat(await file.text());
+    if(parsed.invalid.length){datPreview.textContent=`لم يتم الاستيراد: ${parsed.invalid.length} سطر غير مطابق. أمثلة: ${parsed.invalid.slice(0,8).join('، ')}. راجع الملف أولاً.`;return;}
+    pendingDat=parsed.rows;
+    const ids=new Set(pendingDat.map(r=>r.USERID));
+    datPreview.textContent=`جاهز للمراجعة: ${pendingDat.length} بصمة، ${ids.size} رقم شاب، ${parsed.duplicateFile} تكرار داخل الملف تم تجاهله. أول تاريخ: ${pendingDat.reduce((a,r)=>!a||r.CHECKTIME<a?r.CHECKTIME:a,'')}؛ آخر تاريخ: ${pendingDat.reduce((a,r)=>r.CHECKTIME>a?r.CHECKTIME:a,'')}.`;
+    datUpload.disabled=!pendingDat.length;
+  }catch(err){datPreview.textContent='تعذر قراءة الملف: '+err.message;}
+});
+datUpload.addEventListener('click',async()=>{
+  if(!attendanceAdmin()||!pendingDat.length||!sb)return;
+  datUpload.disabled=true;let inserted=0,skipped=0;
+  try{
+    for(let i=0;i<pendingDat.length;i+=200){
+      datResult.textContent=`جارٍ الاستيراد: ${Math.min(i+200,pendingDat.length)} من ${pendingDat.length}`;
+      const {data,error}=await sb.rpc('import_weekly_dat',{p_rows:pendingDat.slice(i,i+200)});
+      if(error)throw error;
+      inserted+=Number(data?.inserted||0);skipped+=Number(data?.skipped||0);
+    }
+    datResult.textContent=`تم الاستيراد بنجاح: ${inserted} بصمة جديدة، و${skipped} بصمة موجودة بالفعل. يمكن إعادة رفع نفس الملف بأمان.`;
+    pendingDat=[];datFile.value='';
+  }catch(err){datResult.textContent=`توقف الاستيراد بعد حفظ ${inserted} بصمة جديدة. ${err.message}. يمكنك إعادة رفع نفس الملف بدون تكرار.`;datUpload.disabled=false;}
 });
