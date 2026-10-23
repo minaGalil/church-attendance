@@ -9,6 +9,7 @@ const sb = configured ? createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY) : n
 let roles=[], view='home', records=[], shown=[], deptMap=new Map(), youthMap=new Map();
 const admin = () => roles.includes('super_admin');
 const churchAdmin = () => roles.includes('church_admin');
+const parentManager = () => admin() || churchAdmin();
 const attendanceAdmin = () => roles.some(x=>['super_admin','attendance_manager'].includes(x));
 const unregisteredViewer = () => roles.some(x=>['super_admin','church_admin','attendance_manager'].includes(x));
 const youthEditor = () => roles.some(x=>['super_admin','church_admin','servant'].includes(x));
@@ -132,7 +133,7 @@ async function enter(){
   for(const b of document.querySelectorAll('[data-view]')){
     const v=b.dataset.view;
     b.hidden=(['users','classes'].includes(v)&&!admin()&&v==='users') || (v==='classes'&&!admin()&&!churchAdmin()&& !roles.includes('servant')) || (v==='import'&&!attendanceAdmin()) || (v==='unregistered'&&!unregisteredViewer())
-      || (v==='parents'&&!admin()) || (parent()&& !['home','attendance','reports','account'].includes(v));
+      || (v==='parents'&&!parentManager()) || (parent()&& !['home','attendance','reports','account'].includes(v));
   }
   toggleApp(true);
   await loadDepartments();
@@ -141,7 +142,7 @@ async function enter(){
 async function load(v){
   if(!sb)return;
   if(parent()&& !['home','attendance','reports','account'].includes(v)){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
-  if((['users','parents'].includes(v)&&!admin()) || (v==='import'&&!attendanceAdmin()) || (v==='unregistered'&&!unregisteredViewer())){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
+  if(((v==='users'&&!admin()) || (v==='parents'&&!parentManager())) || (v==='import'&&!attendanceAdmin()) || (v==='unregistered'&&!unregisteredViewer())){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
   $('datImporter').hidden=v!=='import';view=v;records=[];shown=[];setMessage('');note('جارٍ تحميل البيانات...');
   $('content').replaceChildren();
   updateSorting();
@@ -582,7 +583,7 @@ async function renderParentPortal(){
   }
 }
 async function renderParentManagement(){
-  if(!admin())throw new Error('هذه الصفحة لمدير النظام فقط.');
+  if(!parentManager())throw new Error('هذه الصفحة لمدير النظام أو مسؤول الخدمة فقط.');
   const root=$('content');root.replaceChildren();
   const heading=document.createElement('h3');heading.textContent='إنشاء حساب ولي أمر وربط الأبناء';root.append(heading);
   const form=document.createElement('form');form.className='youth-form';
