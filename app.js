@@ -9,7 +9,7 @@ const sb = configured ? createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY) : n
 let roles=[], view='home', records=[], shown=[], deptMap=new Map(), youthMap=new Map();
 const admin = () => roles.includes('super_admin');
 const churchAdmin = () => roles.includes('church_admin');
-const parentManager = () => admin() || churchAdmin();
+const parentManager = () => admin() || churchAdmin() || roles.includes('servant');
 const attendanceAdmin = () => roles.some(x=>['super_admin','attendance_manager'].includes(x));
 const unregisteredViewer = () => roles.some(x=>['super_admin','church_admin','attendance_manager'].includes(x));
 const youthEditor = () => roles.some(x=>['super_admin','church_admin','servant'].includes(x));
@@ -583,16 +583,18 @@ async function renderParentPortal(){
   }
 }
 async function renderParentManagement(){
-  if(!parentManager())throw new Error('هذه الصفحة لمدير النظام أو مسؤول الخدمة فقط.');
+  if(!parentManager())throw new Error('ليس لديك صلاحية إدارة أولياء الأمور.');
   const root=$('content');root.replaceChildren();
   const heading=document.createElement('h3');heading.textContent='إنشاء حساب ولي أمر وربط الأبناء';root.append(heading);
   const form=document.createElement('form');form.className='youth-form';
   const [nameBox,name]=makeField('اسم ولي الأمر');const [emailBox,email]=makeField('البريد الإلكتروني','email');
+  const [passwordBox, parentPassword]=makeField('كلمة مرور لولي الأمر (10 أحرف على الأقل، حروف وأرقام)','text');
+  parentPassword.autocomplete='off';parentPassword.minLength=10;parentPassword.required=true;
   const create=document.createElement('button');create.type='submit';create.textContent='إنشاء حساب ولي أمر';
-  const result=document.createElement('p');result.setAttribute('role','status');form.append(nameBox,emailBox,create,result);root.append(form);
+  const result=document.createElement('p');result.setAttribute('role','status');form.append(nameBox,emailBox,passwordBox,create,result);root.append(form);
   form.onsubmit=async e=>{e.preventDefault();create.disabled=true;result.textContent='جارٍ الإنشاء...';try{
-    const r=await parentApi('create_parent',{full_name:name.value.trim(),email:email.value.trim()});
-    result.textContent=`تم إنشاء الحساب: ${r.email} — كلمة المرور المؤقتة: ${r.temporary_password} (انسخها الآن، ولا تشاركها علناً)`;
+    const r=await parentApi('create_parent',{full_name:name.value.trim(),email:email.value.trim(),password:parentPassword.value});
+    result.textContent=`تم إنشاء وتفعيل الحساب: ${r.email}. يمكن تسجيل الدخول بكلمة المرور التي حددتها. لا تشاركها علناً.`;parentPassword.value='';
     await loadLinks();
   }catch(err){result.textContent='خطأ: '+err.message;}finally{create.disabled=false;}};
   const linkTitle=document.createElement('h3');linkTitle.textContent='ربط ابن بحساب ولي أمر';root.append(linkTitle);
@@ -606,6 +608,18 @@ async function renderParentManagement(){
     await parentApi('link_child',{parent_email:parentEmail.value.trim(),user_id:Number(childId.value),relationship:relationship.value});
     feedback.textContent='تم الربط بنجاح.';await loadLinks();
   }catch(err){feedback.textContent='تعذر الربط: '+err.message;}finally{link.disabled=false;}};
+  const resetTitle=document.createElement('h3');resetTitle.textContent='تفعيل حساب ولي أمر أو تغيير كلمة مروره';root.append(resetTitle);
+  const resetForm=document.createElement('form');resetForm.className='youth-form';
+  const [resetEmailBox,resetEmail]=makeField('بريد ولي الأمر','email');
+  const [resetPassBox,resetPass]=makeField('كلمة المرور الجديدة (10 أحرف على الأقل، حروف وأرقام)','text');
+  resetPass.autocomplete='off';resetPass.minLength=10;
+  const resetButton=document.createElement('button');resetButton.type='submit';resetButton.textContent='تغيير كلمة المرور وتفعيل الحساب';
+  const resetFeedback=document.createElement('p');resetFeedback.setAttribute('role','status');
+  resetForm.append(resetEmailBox,resetPassBox,resetButton,resetFeedback);root.append(resetForm);
+  resetForm.onsubmit=async e=>{e.preventDefault();resetButton.disabled=true;try{
+    await parentApi('reset_parent_password',{parent_email:resetEmail.value.trim(),password:resetPass.value});
+    resetFeedback.textContent='تم تغيير كلمة المرور وتفعيل الحساب.';resetPass.value='';
+  }catch(err){resetFeedback.textContent='تعذر التغيير: '+err.message;}finally{resetButton.disabled=false;}};
   const list=document.createElement('div');root.append(list);
   async function loadLinks(){list.textContent='جارٍ تحميل الروابط...';try{
     const {links}=await parentApi('list_links');list.replaceChildren();
