@@ -149,7 +149,7 @@ async function load(v){
   $('content').replaceChildren();
   updateSorting();
   document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===v));
-  const names={'abnaa-import':'استيراد أبناء النور XLSX','abnaa-compare':'مقارنة الحضور الموحد',home:'القائمة الرئيسية - خدمة متوسط بنين',children:'إدارة الشباب',classes:'عرض الفصول - خدمة متوسط بنين',
+  const names={'abnaa-import':'استيراد أبناء النور XLSX','abnaa-compare':'تقارير الحضور و الغياب',home:'القائمة الرئيسية - خدمة متوسط بنين',children:'إدارة الشباب',classes:'عرض الفصول - خدمة متوسط بنين',
     attendance:'سجل الحضور والبصمات',unregistered:'البصمات غير المسجلة',reports:'التقارير',users:'إدارة المستخدمين',parents:'ربط أولياء الأمور بالأبناء',account:'حسابي - تغيير كلمة المرور',import:'استيراد ملف البصمة الأسبوعي'};
   title(names[v]||'خدمة متوسط بنين');
   $('filterCard').hidden=['users','parents','import','account','abnaa-import','abnaa-compare'].includes(v);
@@ -706,23 +706,80 @@ async function renderAbnaaImport(){
   note('استيراد أبناء النور — XLSX');
 }
 async function renderAbnaaReport(){
-  const root=$('content');root.replaceChildren();const heading=document.createElement('h3');heading.textContent='مقارنة حضور أبناء النور مع البصمة';root.append(heading);
-  const controls=document.createElement('div');controls.style.cssText='display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin:12px 0';
-  const from=document.createElement('input');from.type='date';from.value=new Date(new Date().getFullYear(),new Date().getMonth(),1).toLocaleDateString('en-CA');
-  const to=document.createElement('input');to.type='date';to.value=new Date().toLocaleDateString('en-CA');
-  const status=document.createElement('select');[['','كل الحالات'],['both','حاضر في النظامين'],['fingerprint_only','بصمة فقط'],['abnaa_only','أبناء النور فقط'],['neither','بدون حضور في النظامين'],['not_in_source','غير موجود في أبناء النور']].forEach(([v,l])=>status.add(new Option(l,v)));
-  const search=document.createElement('input');search.placeholder='بحث باسم الشاب';
-  const run=document.createElement('button');run.textContent='عرض المقارنة';
-  for(const [label,el] of [['من',from],['إلى',to],['الحالة',status],['بحث',search]]){const wrap=document.createElement('label');wrap.textContent=label;wrap.append(el);controls.append(wrap);}controls.append(run);root.append(controls);
-  const summaryBox=document.createElement('div');root.append(summaryBox);const output=document.createElement('div');root.append(output);let data=[];
-  const redraw=()=>{const q=search.value.trim();const rows=data.filter(r=>(!status.value||r.category===status.value)&&(!q||r.name.includes(q)));output.replaceChildren();
-    const counts={both:0,fingerprint_only:0,abnaa_only:0,neither:0,not_in_source:0};data.forEach(r=>counts[r.category]=(counts[r.category]||0)+1);
-    summaryBox.replaceChildren(summary([['الشاب × الاجتماع',data.length],['حاضر في النظامين',counts.both],['بصمة فقط',counts.fingerprint_only],['أبناء النور فقط',counts.abnaa_only],['بدون حضور',counts.neither],['غير موجود في المصدر',counts.not_in_source]]));
-    const labels={both:'حاضر في النظامين',fingerprint_only:'بصمة فقط',abnaa_only:'أبناء النور فقط',neither:'بدون حضور',not_in_source:'غير موجود في أبناء النور'};
-    const display=rows.map(r=>({name:r.name,date:r.date,class_name:r.class_name,fingerprint_time:r.fingerprint_time||'—',abnaa_time:r.abnaa_time|| (r.abnaa_status==='absent'?'غائب':'غير موجود'),category:labels[r.category]||r.category}));
-    output.append(table(['الشاب','التاريخ','الفصل','وقت البصمة','أبناء النور','المقارنة'],display,['name','date','class_name','fingerprint_time','abnaa_time','category']));note(`النتائج المعروضة: ${rows.length}`);
+  const root=$('content');root.replaceChildren();
+  const heading=document.createElement('h3');heading.textContent='تقارير الحضور و الغياب';root.append(heading);
+  const controls=document.createElement('div');controls.className='abnaa-controls';
+  controls.style.cssText='display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin:12px 0';
+  const dateValue=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const today=new Date(), first=new Date(today.getFullYear(),today.getMonth(),1);
+  const from=document.createElement('input');from.type='date';from.value=dateValue(first);
+  const to=document.createElement('input');to.type='date';to.value=dateValue(today);
+  const status=document.createElement('select');
+  [['','كل الحالات'],['both','حاضر في النظامين'],['fingerprint_only','بصمة فقط'],['abnaa_only','أبناء النور فقط'],['neither','بدون حضور في النظامين'],['not_in_source','غير موجود في أبناء النور']].forEach(([v,l])=>status.add(new Option(l,v)));
+  const search=document.createElement('input');search.placeholder='الاسم أو الفصل أو رقم البصمة';
+  const department=document.createElement('select');department.add(new Option('كل الفصول',''));
+  const sortField=document.createElement('select');
+  [['name','اسم الشاب'],['date','التاريخ'],['class_name','الفصل'],['fingerprint_time','وقت البصمة'],['abnaa_time','وقت أبناء النور'],['category','حالة المقارنة']].forEach(([v,l])=>sortField.add(new Option(l,v)));
+  const direction=document.createElement('select');direction.add(new Option('تصاعدي','asc'));direction.add(new Option('تنازلي','desc'));sortField.value='date';direction.value='desc';
+  const run=document.createElement('button');run.textContent='عرض التقرير';
+  const reset=document.createElement('button');reset.textContent='مسح الفلاتر';reset.className='light';
+  const excel=document.createElement('button');excel.textContent='▤ تصدير Excel (CSV)';excel.className='outline';excel.disabled=true;
+  const pdf=document.createElement('button');pdf.textContent='▣ طباعة / PDF';pdf.className='outline';pdf.disabled=true;
+  for(const [label,el] of [['من تاريخ',from],['إلى تاريخ',to],['الفصل',department],['الحالة',status],['البحث',search],['ترتيب حسب',sortField],['الاتجاه',direction]]){
+    const wrap=document.createElement('label');wrap.textContent=label;wrap.append(el);controls.append(wrap);
+  }
+  controls.append(run,reset,excel,pdf);root.append(controls);
+  const printable=document.createElement('section');printable.id='abnaaPrintable';root.append(printable);
+  const summaryBox=document.createElement('div');printable.append(summaryBox);
+  const warning=document.createElement('p');printable.append(warning);
+  const output=document.createElement('div');printable.append(output);
+  const unmatchedBox=document.createElement('div');printable.append(unmatchedBox);
+  let data=[],filtered=[],unmatched=[],hasLoaded=false;
+  const labels={both:'حاضر في النظامين',fingerprint_only:'بصمة فقط',abnaa_only:'أبناء النور فقط',neither:'بدون حضور',not_in_source:'غير موجود في أبناء النور'};
+  const fields=['name','date','class_name','fingerprint_time','abnaa_time','category'];
+  const headers=['الشاب','التاريخ','الفصل','وقت البصمة','أبناء النور','المقارنة'];
+  const printableRow=r=>({name:r.name??'',date:r.date??'',class_name:r.class_name??'',fingerprint_time:r.fingerprint_time||'—',abnaa_time:r.abnaa_time||(r.abnaa_status==='absent'?'غائب':'غير موجود'),category:labels[r.category]||r.category||''});
+  function redraw(){
+    const q=clean(search.value);
+    filtered=data.filter(r=>(!status.value||r.category===status.value)&&(!department.value||r.class_name===department.value)&&(!q||clean([r.name,r.class_name,r.user_id,r.fingerprint_id].join(' ')).includes(q)));
+    const key=sortField.value,dir=direction.value==='asc'?1:-1;
+    filtered.sort((a,b)=>dir*String(a[key]??'').localeCompare(String(b[key]??''),'ar',{numeric:true,sensitivity:'base'}));
+    const counts={both:0,fingerprint_only:0,abnaa_only:0,neither:0,not_in_source:0};filtered.forEach(r=>{counts[r.category]=(counts[r.category]||0)+1;});
+    summaryBox.replaceChildren(summary([['الشاب × الاجتماع',filtered.length],['حاضر في النظامين',counts.both],['بصمة فقط',counts.fingerprint_only],['أبناء النور فقط',counts.abnaa_only],['بدون حضور',counts.neither],['غير موجود في المصدر',counts.not_in_source]]));
+    output.replaceChildren(table(headers,filtered.map(printableRow),fields));
+    note(`النتائج المعروضة: ${filtered.length}`);
+  }
+  async function fetchReport(){
+    if(from.value>to.value){setMessage('تاريخ البداية يجب أن يكون قبل تاريخ النهاية.');return;}
+    run.disabled=true;excel.disabled=true;pdf.disabled=true;hasLoaded=false;output.textContent='جارٍ تحميل التقرير...';setMessage('');
+    try{
+      const result=await abnaaApi('report',{from:from.value,to:to.value});
+      data=Array.isArray(result.rows)?result.rows:[];unmatched=Array.isArray(result.unmatched)?result.unmatched:[];
+      const prev=department.value;department.replaceChildren(new Option('كل الفصول',''));
+      [...new Set(data.map(r=>r.class_name).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ar')).forEach(c=>department.add(new Option(c,c)));
+      if([...department.options].some(o=>o.value===prev))department.value=prev;
+      warning.textContent=`أسماء تحتاج مراجعة: ${unmatched.length}. ${result.warning||''}`;
+      unmatchedBox.replaceChildren();if(unmatched.length){const h=document.createElement('h3');h.textContent='الأسماء غير المطابقة';unmatchedBox.append(h,table(['الاسم','الفصل','حالة المطابقة'],unmatched,['name','class_name','match_status']));}
+      hasLoaded=true;redraw();excel.disabled=false;pdf.disabled=false;
+    }catch(e){output.textContent=`تعذر تحميل التقرير: ${e.message}`;}finally{run.disabled=false;}
+  }
+  run.onclick=fetchReport;
+  for(const el of [status,department,sortField,direction])el.onchange=()=>{if(hasLoaded)redraw();};
+  search.oninput=()=>{if(hasLoaded)redraw();};
+  reset.onclick=()=>{search.value='';status.value='';department.value='';sortField.value='date';direction.value='desc';from.value=dateValue(first);to.value=dateValue(today);if(hasLoaded)redraw();};
+  excel.onclick=()=>{
+    if(!hasLoaded)return;
+    const escape=v=>'"'+String(v??'').replaceAll('"','""')+'"';
+    const lines=[headers,...filtered.map(r=>fields.map(k=>printableRow(r)[k]))];
+    const csv='\uFEFF'+lines.map(row=>row.map(escape).join(',')).join('\r\n');
+    const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+    const a=document.createElement('a');a.href=url;a.download=`تقارير_الحضور_والغياب_${from.value}_${to.value}.csv`;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
   };
-  run.onclick=async()=>{output.textContent='جارٍ تحميل المقارنة...';try{const result=await abnaaApi('report',{from:from.value,to:to.value});data=result.rows;redraw();const info=document.createElement('p');info.textContent=`أسماء تحتاج مراجعة: ${result.unmatched.length}. ${result.warning}`;output.prepend(info);if(result.unmatched.length)output.append(table(['اسم غير مطابق','الفصل','الحالة'],result.unmatched,['name','class_name','match_status']));}catch(e){output.textContent=`تعذر تحميل التقرير: ${e.message}`;}};
-  status.onchange=()=>{if(data.length)redraw();};search.oninput=()=>{if(data.length)redraw();};
-  note('مقارنة أبناء النور والبصمة');
+  pdf.onclick=()=>{
+    if(!hasLoaded)return;
+    let style=document.getElementById('abnaaPrintStyle');
+    if(!style){style=document.createElement('style');style.id='abnaaPrintStyle';style.textContent=`@media print{@page{size:A4 landscape;margin:10mm}body:has(#abnaaPrintable) header.hero,body:has(#abnaaPrintable) aside.sidebar,body:has(#abnaaPrintable) .topbar,body:has(#abnaaPrintable) .filter-card,body:has(#abnaaPrintable) .actions,body:has(#abnaaPrintable) .abnaa-controls,body:has(#abnaaPrintable) footer,body:has(#abnaaPrintable) #notice,body:has(#abnaaPrintable) #message{display:none!important}body:has(#abnaaPrintable) .layout,body:has(#abnaaPrintable) .main,body:has(#abnaaPrintable) .panel{display:block!important;width:100%!important;margin:0!important;padding:0!important;box-shadow:none!important}body:has(#abnaaPrintable) table{width:100%;font-size:9pt;border-collapse:collapse}body:has(#abnaaPrintable) th,body:has(#abnaaPrintable) td{border:1px solid #aaa;padding:4px}body:has(#abnaaPrintable) tr{break-inside:avoid}body:has(#abnaaPrintable) thead{display:table-header-group}}`;document.head.append(style);}
+    window.print();
+  };
+  note('تقارير الحضور و الغياب — اختَر الفترة واضغط عرض التقرير');
 }
