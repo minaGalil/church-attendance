@@ -711,7 +711,7 @@ async function renderAbnaaReport(){
   const controls=document.createElement('div');controls.className='abnaa-controls';
   controls.style.cssText='display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin:12px 0';
   const dateValue=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  const today=new Date(), first=new Date(today.getFullYear(),today.getMonth(),1);
+  const today=new Date(), first=new Date(today.getFullYear(),today.getMonth()-1,1); // Include previous month's meetings by default.
   const from=document.createElement('input');from.type='date';from.value=dateValue(first);
   const to=document.createElement('input');to.type='date';to.value=dateValue(today);
   const status=document.createElement('select');
@@ -766,7 +766,8 @@ async function renderAbnaaReport(){
   run.onclick=fetchReport;
   for(const el of [status,department,sortField,direction])el.onchange=()=>{if(hasLoaded)redraw();};
   search.oninput=()=>{if(hasLoaded)redraw();};
-  reset.onclick=()=>{search.value='';status.value='';department.value='';sortField.value='date';direction.value='desc';from.value=dateValue(first);to.value=dateValue(today);if(hasLoaded)redraw();};
+  reset.onclick=async()=>{search.value='';status.value='';department.value='';sortField.value='date';direction.value='desc';from.value=dateValue(first);to.value=dateValue(today);await fetchReport();};
+  for(const dateInput of [from,to])dateInput.addEventListener('change',()=>{hasLoaded=false;excel.disabled=true;pdf.disabled=true;note('تم تغيير الفترة؛ اضغط عرض التقرير لتحميل بيانات الفترة الجديدة.');});
   excel.onclick=()=>{
     if(!hasLoaded)return;
     const escape=v=>'"'+String(v??'').replaceAll('"','""')+'"';
@@ -778,7 +779,7 @@ async function renderAbnaaReport(){
   pdf.onclick=()=>{
     if(!hasLoaded)return;
     let style=document.getElementById('abnaaPrintStyle');
-    if(!style){style=document.createElement('style');style.id='abnaaPrintStyle';style.textContent=`@media print{@page{size:A4 landscape;margin:10mm}body:has(#abnaaPrintable) header.hero,body:has(#abnaaPrintable) aside.sidebar,body:has(#abnaaPrintable) .topbar,body:has(#abnaaPrintable) .filter-card,body:has(#abnaaPrintable) .actions,body:has(#abnaaPrintable) .abnaa-controls,body:has(#abnaaPrintable) footer,body:has(#abnaaPrintable) #notice,body:has(#abnaaPrintable) #message{display:none!important}body:has(#abnaaPrintable) .layout,body:has(#abnaaPrintable) .main,body:has(#abnaaPrintable) .panel{display:block!important;width:100%!important;margin:0!important;padding:0!important;box-shadow:none!important}body:has(#abnaaPrintable) table{width:100%;font-size:9pt;border-collapse:collapse}body:has(#abnaaPrintable) th,body:has(#abnaaPrintable) td{border:1px solid #aaa;padding:4px}body:has(#abnaaPrintable) tr{break-inside:avoid}body:has(#abnaaPrintable) thead{display:table-header-group}}`;document.head.append(style);}
+    if(!style){style=document.createElement('style');style.id='abnaaPrintStyle';style.textContent=`@media print{@page{size:A4 landscape;margin:10mm}body:has(#abnaaPrintable) #login,body:has(#abnaaPrintable) header.hero,body:has(#abnaaPrintable) aside.sidebar,body:has(#abnaaPrintable) .topbar,body:has(#abnaaPrintable) .filter-card,body:has(#abnaaPrintable) .actions,body:has(#abnaaPrintable) .abnaa-controls,body:has(#abnaaPrintable) footer,body:has(#abnaaPrintable) #notice,body:has(#abnaaPrintable) #message{display:none!important}body:has(#abnaaPrintable) .layout,body:has(#abnaaPrintable) .main,body:has(#abnaaPrintable) .panel{display:block!important;width:100%!important;margin:0!important;padding:0!important;box-shadow:none!important}body:has(#abnaaPrintable) .table-wrap{overflow:visible!important}body:has(#abnaaPrintable) table{width:100%;font-size:9pt;border-collapse:collapse}body:has(#abnaaPrintable) th,body:has(#abnaaPrintable) td{border:1px solid #aaa;padding:4px}body:has(#abnaaPrintable) tr{break-inside:avoid}body:has(#abnaaPrintable) thead{display:table-header-group}}`;document.head.append(style);}
     window.print();
   };
   note('تقارير الحضور و الغياب — اختَر الفترة واضغط عرض التقرير');
