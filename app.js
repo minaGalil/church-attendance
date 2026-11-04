@@ -1,3 +1,4 @@
+// Abnaa Al Noor integrated UI — 2026-11-04
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY } from './config.js';
@@ -55,7 +56,7 @@ function ensureSorting(){
 function updateSorting(){
   ensureSorting();
   const wrap=document.querySelector('.sort-controls');if(!wrap)return;
-  wrap.hidden=['users','import','account'].includes(view);
+  wrap.hidden=['users','import','account','abnaa-import','abnaa-compare'].includes(view);
   const field=document.getElementById('sortField');
   const allowed=['home','classes'].includes(view)?[['DEPTID','رقم الفصل'],['DEPTNAME','اسم الفصل'],['COUNT','عدد الشباب']]:
     view==='children'?[['USERID','رقم البصمة'],['NAME','الاسم'],['CLASS_NAME','الفصل'],['TITLE','الخادم']]:
@@ -128,13 +129,13 @@ async function enter(){
     await sb.auth.signOut();toggleApp(false);setMessage('الحساب غير مفعل أو لا يملك صلاحية دخول.');return;
   }
   roles=rs.map(r=>r.ROLE);
-  if(!parent()) abnaaNav();
+  // Abnaa navigation buttons are declared in index.html.
   $('who').textContent=account.FULL_NAME||user.email;
   $('roleLabel').textContent=admin()?'مدير النظام':churchAdmin()?'مسؤول الخدمة':roles.includes('servant')?'خادم':roles.includes('attendance_manager')?'مسؤول الحضور':'ولي أمر';
   for(const b of document.querySelectorAll('[data-view]')){
     const v=b.dataset.view;
     b.hidden=(['users','classes'].includes(v)&&!admin()&&v==='users') || (v==='classes'&&!admin()&&!churchAdmin()&& !roles.includes('servant')) || (v==='import'&&!attendanceAdmin()) || (v==='unregistered'&&!unregisteredViewer())
-      || (v==='parents'&&!parentManager()) || (parent()&& !['home','attendance','reports','account'].includes(v));
+      || (v==='parents'&&!parentManager()) || (['abnaa-import','abnaa-compare'].includes(v)&&!parentManager()) || (parent()&& !['home','attendance','reports','account'].includes(v));
   }
   toggleApp(true);
   await loadDepartments();
@@ -143,17 +144,17 @@ async function enter(){
 async function load(v){
   if(!sb)return;
   if(parent()&& !['home','attendance','reports','account'].includes(v)){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
-  if((['abnaa-import','abnaa-report'].includes(v)&&!parentManager()) || ((v==='users'&&!admin()) || (v==='parents'&&!parentManager())) || (v==='import'&&!attendanceAdmin()) || (v==='unregistered'&&!unregisteredViewer())){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
+  if((['abnaa-import','abnaa-compare'].includes(v)&&!parentManager()) || ((v==='users'&&!admin()) || (v==='parents'&&!parentManager())) || (v==='import'&&!attendanceAdmin()) || (v==='unregistered'&&!unregisteredViewer())){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
   $('datImporter').hidden=v!=='import';view=v;records=[];shown=[];setMessage('');note('جارٍ تحميل البيانات...');
   $('content').replaceChildren();
   updateSorting();
   document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===v));
-  const names={'abnaa-import':'استيراد أبناء النور XLSX','abnaa-report':'مقارنة الحضور الموحد',home:'القائمة الرئيسية - خدمة متوسط بنين',children:'إدارة الشباب',classes:'عرض الفصول - خدمة متوسط بنين',
+  const names={'abnaa-import':'استيراد أبناء النور XLSX','abnaa-compare':'مقارنة الحضور الموحد',home:'القائمة الرئيسية - خدمة متوسط بنين',children:'إدارة الشباب',classes:'عرض الفصول - خدمة متوسط بنين',
     attendance:'سجل الحضور والبصمات',unregistered:'البصمات غير المسجلة',reports:'التقارير',users:'إدارة المستخدمين',parents:'ربط أولياء الأمور بالأبناء',account:'حسابي - تغيير كلمة المرور',import:'استيراد ملف البصمة الأسبوعي'};
   title(names[v]||'خدمة متوسط بنين');
-  $('filterCard').hidden=['users','parents','import','account','abnaa-import','abnaa-report'].includes(v);
-  $('exportCsv').hidden=['users','parents','import','account','abnaa-import','abnaa-report'].includes(v);
-  $('printPdf').hidden=['users','parents','import','account','abnaa-import','abnaa-report'].includes(v);
+  $('filterCard').hidden=['users','parents','import','account','abnaa-import','abnaa-compare'].includes(v);
+  $('exportCsv').hidden=['users','parents','import','account','abnaa-import','abnaa-compare'].includes(v);
+  $('printPdf').hidden=['users','parents','import','account','abnaa-import','abnaa-compare'].includes(v);
   $('department').closest('label').hidden=parent()||v==='unregistered';
   $('dateFrom').closest('label').hidden=['children','classes','home','users','parents','account'].includes(v);
   $('dateTo').closest('label').hidden=['children','classes','home','users','parents','account'].includes(v);
@@ -161,6 +162,8 @@ async function load(v){
   try{
     if(parent() && ['home','attendance','reports'].includes(v)){await renderParentPortal();return;}
     if(v==='parents'){await renderParentManagement();return;}
+    if(v==='abnaa-import'){await renderAbnaaImport();return;}
+    if(v==='abnaa-compare'){await renderAbnaaReport();return;}
     if(v==='import'){note('اختَر ملف DAT لمراجعته قبل الاستيراد.');return;}
     if(v==='home' && !parent()){await renderDashboard();return;}
     if(v==='account'){renderAccount();note('يمكنك تغيير كلمة مرور حسابك.');return;}
@@ -646,13 +649,6 @@ async function abnaaApi(action,payload={}){
   const body=await response.json().catch(()=>({}));
   if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
   return body;
-}
-function abnaaNav(){
-  const nav=document.querySelector('#sideNav');if(!nav||nav.querySelector('[data-view="abnaa-import"]'))return;
-  for(const [v,label] of [['abnaa-import','⇧ استيراد أبناء النور XLSX'],['abnaa-report','▤ مقارنة البصمة وأبناء النور']]){
-    const b=document.createElement('button');b.dataset.view=v;b.textContent=label;
-    b.addEventListener('click',()=>load(v));nav.append(b);
-  }
 }
 function abnaaDate(v){
   if(v instanceof Date&&!Number.isNaN(v.getTime()))return `${v.getFullYear()}-${String(v.getMonth()+1).padStart(2,'0')}-${String(v.getDate()).padStart(2,'0')}`;
