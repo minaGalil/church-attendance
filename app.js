@@ -128,12 +128,13 @@ async function enter(){
     await sb.auth.signOut();toggleApp(false);setMessage('الحساب غير مفعل أو لا يملك صلاحية دخول.');return;
   }
   roles=rs.map(r=>r.ROLE);
+  if(!parent()) abnaaNav();
   $('who').textContent=account.FULL_NAME||user.email;
   $('roleLabel').textContent=admin()?'مدير النظام':churchAdmin()?'مسؤول الخدمة':roles.includes('servant')?'خادم':roles.includes('attendance_manager')?'مسؤول الحضور':'ولي أمر';
   for(const b of document.querySelectorAll('[data-view]')){
     const v=b.dataset.view;
     b.hidden=(['users','classes'].includes(v)&&!admin()&&v==='users') || (v==='classes'&&!admin()&&!churchAdmin()&& !roles.includes('servant')) || (v==='import'&&!attendanceAdmin()) || (v==='unregistered'&&!unregisteredViewer())
-      || (v==='parents'&&!parentManager()) || (parent()&& !['home','account'].includes(v));
+      || (v==='parents'&&!parentManager()) || (parent()&& !['home','attendance','reports','account'].includes(v));
   }
   toggleApp(true);
   await loadDepartments();
@@ -141,29 +142,18 @@ async function enter(){
 }
 async function load(v){
   if(!sb)return;
-  if(parent()&& !['home','account'].includes(v)){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
-  if(((v==='users'&&!admin()) || (v==='parents'&&!parentManager())) || (v==='import'&&!attendanceAdmin()) || (v==='unregistered'&&!unregisteredViewer())){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
+  if(parent()&& !['home','attendance','reports','account'].includes(v)){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
+  if((['abnaa-import','abnaa-report'].includes(v)&&!parentManager()) || ((v==='users'&&!admin()) || (v==='parents'&&!parentManager())) || (v==='import'&&!attendanceAdmin()) || (v==='unregistered'&&!unregisteredViewer())){setMessage('غير مصرح لك بعرض هذه الشاشة.');return;}
   $('datImporter').hidden=v!=='import';view=v;records=[];shown=[];setMessage('');note('جارٍ تحميل البيانات...');
   $('content').replaceChildren();
   updateSorting();
-  if(parent()) {
-    $('filterCard').style.display='none';
-    $('exportCsv').style.display='none';
-    $('printPdf').style.display='none';
-    document.querySelector('.sort-controls')?.style.setProperty('display','none');
-  } else {
-    $('filterCard').style.display='';
-    $('exportCsv').style.display='';
-    $('printPdf').style.display='';
-    document.querySelector('.sort-controls')?.style.removeProperty('display');
-  }
   document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===v));
-  const names={home:'القائمة الرئيسية - خدمة متوسط بنين',children:'إدارة الشباب',classes:'عرض الفصول - خدمة متوسط بنين',
+  const names={'abnaa-import':'استيراد أبناء النور XLSX','abnaa-report':'مقارنة الحضور الموحد',home:'القائمة الرئيسية - خدمة متوسط بنين',children:'إدارة الشباب',classes:'عرض الفصول - خدمة متوسط بنين',
     attendance:'سجل الحضور والبصمات',unregistered:'البصمات غير المسجلة',reports:'التقارير',users:'إدارة المستخدمين',parents:'ربط أولياء الأمور بالأبناء',account:'حسابي - تغيير كلمة المرور',import:'استيراد ملف البصمة الأسبوعي'};
-  title(parent() && v==='home'?'بوابة ولي الأمر — متابعة حضور الأبناء':names[v]||'خدمة متوسط بنين');
-  $('filterCard').hidden=['users','parents','import','account'].includes(v);
-  $('exportCsv').hidden=['users','parents','import','account'].includes(v);
-  $('printPdf').hidden=['users','parents','import','account'].includes(v);
+  title(names[v]||'خدمة متوسط بنين');
+  $('filterCard').hidden=['users','parents','import','account','abnaa-import','abnaa-report'].includes(v);
+  $('exportCsv').hidden=['users','parents','import','account','abnaa-import','abnaa-report'].includes(v);
+  $('printPdf').hidden=['users','parents','import','account','abnaa-import','abnaa-report'].includes(v);
   $('department').closest('label').hidden=parent()||v==='unregistered';
   $('dateFrom').closest('label').hidden=['children','classes','home','users','parents','account'].includes(v);
   $('dateTo').closest('label').hidden=['children','classes','home','users','parents','account'].includes(v);
@@ -580,93 +570,34 @@ async function renderParentPortal(){
   const root=$('content');root.replaceChildren();
   note('جارٍ تحميل بيانات الأبناء...');
   const {children}=await parentApi('my_children');
-  note('');
+  note(`الأبناء المرتبطون بحسابك: ${children.length}`);
   if(!children.length){root.textContent='لا يوجد أبناء مرتبطون بحسابك حتى الآن. تواصل مع مسؤول الخدمة لربط حسابك.';return;}
-  if(!$('parentPortalStyles')){
-    const css=document.createElement('style');css.id='parentPortalStyles';
-    css.textContent=`
-      .parent-portal{direction:rtl;text-align:right;max-width:1050px;margin:auto;color:#073e35}
-      .parent-welcome{font-size:1.05rem;color:#47655f;margin:0 0 18px}
-      .parent-card{background:#fff;border:1px solid #dce9e3;border-radius:18px;padding:20px;margin:0 0 20px;box-shadow:0 4px 20px #073e350d}
-      .parent-card h3{font-size:1.35rem;margin:0 0 6px;color:#064d3f}
-      .parent-muted{color:#59766f;font-size:.94rem;margin:0 0 16px}
-      .parent-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0}
-      .parent-stat{background:#edf6f1;padding:16px;border-radius:12px;display:flex;flex-direction:column;gap:8px}
-      .parent-stat strong{font-size:1.35rem;color:#00583f}
-      .parent-table{width:100%;border-collapse:collapse;min-width:0}
-      .parent-table th,.parent-table td{padding:13px 10px;border-bottom:1px solid #e3ede8;text-align:right}
-      .parent-table th{background:#e8f2ed}
-      .parent-empty{background:#f7faf8;border-radius:10px;padding:15px}
-      .parent-help{font-size:.9rem;color:#5c6f69;line-height:1.8}
-      @media(max-width:600px){.parent-card{padding:14px}.parent-stats{gap:8px}.parent-stat{padding:12px}.parent-card h3{font-size:1.2rem}.parent-table th,.parent-table td{padding:11px 6px;font-size:.9rem}}
-    `;document.head.append(css);
-  }
-  const page=document.createElement('div');page.className='parent-portal';root.append(page);
-  const welcome=document.createElement('p');welcome.className='parent-welcome';welcome.textContent='أهلاً بك في خدمة متوسط بنين — تابع حضور أبنائك بسهولة.';page.append(welcome);
+  const intro=document.createElement('p');intro.textContent='سجل حضور أبنائك فقط. الأيام بدون بصمة لا تعني غياباً مؤكداً إلا بعد اكتمال رفع الملف.';root.append(intro);
   for(const child of children){
-    const card=document.createElement('section');card.className='parent-card';page.append(card);
-    const heading=document.createElement('h3');heading.textContent=child.name||'الابن';card.append(heading);
-    const meta=document.createElement('p');meta.className='parent-muted';meta.textContent=`الفصل: ${child.class_name||'غير محدد'}`;card.append(meta);
-    const earliest=new Map();
-    for(const item of child.attendance||[]){
-      const time=String(item.checktime||'');const day=validDate(time);
-      if(!/^\d{4}-\d{2}-\d{2}$/.test(day))continue;
-      if(!earliest.has(day)||time<earliest.get(day))earliest.set(day,time);
-    }
-    const dates=[...earliest.keys()].sort().reverse();
-    const stats=document.createElement('div');stats.className='parent-stats';card.append(stats);
-    for(const [label,value] of [['أيام الحضور المسجلة',String(dates.length)],['آخر حضور',dates[0]||'لا يوجد بعد']]){
-      const box=document.createElement('div');box.className='parent-stat';
-      const caption=document.createElement('span');caption.textContent=label;
-      const number=document.createElement('strong');number.textContent=value;
-      box.append(caption,number);stats.append(box);
-    }
-    const sub=document.createElement('h4');sub.textContent='سجل الحضور';card.append(sub);
-    if(!dates.length){const empty=document.createElement('p');empty.className='parent-empty';empty.textContent='لا توجد بصمات حضور مسجلة حتى الآن.';card.append(empty);continue;}
-    const rows=dates.map(day=>({date:day,time:formatChecktime(earliest.get(day)).split('   ').pop()}));
-    const tbl=table(['تاريخ الحضور','أول بصمة'],rows,['date','time']);
-    tbl.querySelector('table')?.classList.add('parent-table');card.append(tbl);
+    const section=document.createElement('section');section.className='parent-child-card';
+    const heading=document.createElement('h3');heading.textContent=child.name;section.append(heading);
+    const sub=document.createElement('p');sub.textContent=`الفصل: ${child.class_name||'غير محدد'} — رقم البصمة: ${child.user_id}`;section.append(sub);
+    const dates=[...new Set((child.attendance||[]).map(a=>validDate(a.checktime)))].sort().reverse();
+    const count=document.createElement('p');count.textContent=`أيام الحضور المسجلة: ${dates.length}`;section.append(count);
+    const rows=dates.map(day=>({date:day,time:formatChecktime((child.attendance||[]).filter(a=>validDate(a.checktime)===day).map(a=>a.checktime).sort()[0])}));
+    section.append(table(['تاريخ الحضور','أول بصمة'],rows,['date','time']));root.append(section);
   }
-  const help=document.createElement('p');help.className='parent-help';help.textContent='ملحوظة: عدم وجود بصمة في يوم معين لا يعني غياباً مؤكداً إلا بعد اكتمال رفع ملف الحضور. للاستفسار تواصل مع مسؤول الخدمة.';page.append(help);
-}
-function validateParentPassword(password){
-  if(password.length<10 || password.length>72 || !/[A-Za-z]/.test(password) || !/[0-9]/.test(password))
-    throw new Error('كلمة المرور لازم تكون من 10 إلى 72 حرفاً وتحتوي على حرف إنجليزي ورقم على الأقل. مثال للتوضيح فقط: Church2026Test');
-}
-function passwordVisibility(input, container){
-  const toggle=document.createElement('button');toggle.type='button';toggle.className='light';
-  toggle.textContent='إظهار كلمة المرور';
-  toggle.onclick=()=>{input.type=input.type==='password'?'text':'password';toggle.textContent=input.type==='password'?'إظهار كلمة المرور':'إخفاء كلمة المرور';};
-  container.append(toggle);
 }
 async function renderParentManagement(){
   if(!parentManager())throw new Error('ليس لديك صلاحية إدارة أولياء الأمور.');
   const root=$('content');root.replaceChildren();
   const heading=document.createElement('h3');heading.textContent='إنشاء حساب ولي أمر وربط الأبناء';root.append(heading);
   const form=document.createElement('form');form.className='youth-form';
-  const [nameBox,name]=makeField('اسم ولي الأمر');const [emailBox,email]=makeField('البريد الإلكتروني (يمكن استخدام عنوان تجريبي)','email');
-  const [passwordBox,parentPassword]=makeField('كلمة مرور ولي الأمر (10–72 حرفاً، حروف إنجليزية وأرقام)','password');
-  parentPassword.autocomplete='new-password';parentPassword.minLength=10;parentPassword.maxLength=72;
-  passwordVisibility(parentPassword,passwordBox);
-  const [confirmBox,confirmPassword]=makeField('تأكيد كلمة المرور','password');
-  confirmPassword.autocomplete='new-password';confirmPassword.minLength=10;confirmPassword.maxLength=72;
-  const help=document.createElement('p');help.className='dash-help';
-  help.textContent='مثال توضيحي فقط: Church2026Test — استخدم كلمة مختلفة لكل ولي أمر. البريد التجريبي لا يستقبل رسائل استعادة الحساب.';
+  const [nameBox,name]=makeField('اسم ولي الأمر');const [emailBox,email]=makeField('البريد الإلكتروني','email');
+  const [passwordBox, parentPassword]=makeField('كلمة مرور لولي الأمر (10 أحرف على الأقل، حروف وأرقام)','text');
+  parentPassword.autocomplete='off';parentPassword.minLength=10;parentPassword.required=true;
   const create=document.createElement('button');create.type='submit';create.textContent='إنشاء حساب ولي أمر';
-  const result=document.createElement('p');result.setAttribute('role','status');
-  form.append(nameBox,emailBox,passwordBox,confirmBox,help,create,result);root.append(form);
-  form.onsubmit=async e=>{
-    e.preventDefault();result.textContent='';
-    try{
-      validateParentPassword(parentPassword.value);
-      if(parentPassword.value!==confirmPassword.value)throw new Error('تأكيد كلمة المرور غير مطابق.');
-      create.disabled=true;result.textContent='جارٍ الإنشاء...';
-      const r=await parentApi('create_parent',{full_name:name.value.trim(),email:email.value.trim(),password:parentPassword.value});
-      result.textContent=`تم إنشاء وتفعيل الحساب: ${r.email}. يمكن تسجيل الدخول بكلمة المرور المحددة.`;
-      parentPassword.value='';confirmPassword.value='';
-      await loadLinks();
-    }catch(err){result.textContent='خطأ: '+err.message;}finally{create.disabled=false;}
-  };
+  const result=document.createElement('p');result.setAttribute('role','status');form.append(nameBox,emailBox,passwordBox,create,result);root.append(form);
+  form.onsubmit=async e=>{e.preventDefault();create.disabled=true;result.textContent='جارٍ الإنشاء...';try{
+    const r=await parentApi('create_parent',{full_name:name.value.trim(),email:email.value.trim(),password:parentPassword.value});
+    result.textContent=`تم إنشاء وتفعيل الحساب: ${r.email}. يمكن تسجيل الدخول بكلمة المرور التي حددتها. لا تشاركها علناً.`;parentPassword.value='';
+    await loadLinks();
+  }catch(err){result.textContent='خطأ: '+err.message;}finally{create.disabled=false;}};
   const linkTitle=document.createElement('h3');linkTitle.textContent='ربط ابن بحساب ولي أمر';root.append(linkTitle);
   const linkForm=document.createElement('form');linkForm.className='youth-form';
   const [parentBox,parentEmail]=makeField('بريد ولي الأمر','email');const [childBox,childId]=makeField('رقم بصمة الشاب','number');
@@ -681,24 +612,15 @@ async function renderParentManagement(){
   const resetTitle=document.createElement('h3');resetTitle.textContent='تفعيل حساب ولي أمر أو تغيير كلمة مروره';root.append(resetTitle);
   const resetForm=document.createElement('form');resetForm.className='youth-form';
   const [resetEmailBox,resetEmail]=makeField('بريد ولي الأمر','email');
-  const [resetPassBox,resetPass]=makeField('كلمة المرور الجديدة (10–72 حرفاً، حروف إنجليزية وأرقام)','password');
-  resetPass.autocomplete='new-password';resetPass.minLength=10;resetPass.maxLength=72;
-  passwordVisibility(resetPass,resetPassBox);
-  const [resetConfirmBox,resetConfirm]=makeField('تأكيد كلمة المرور الجديدة','password');
-  resetConfirm.autocomplete='new-password';resetConfirm.minLength=10;resetConfirm.maxLength=72;
+  const [resetPassBox,resetPass]=makeField('كلمة المرور الجديدة (10 أحرف على الأقل، حروف وأرقام)','text');
+  resetPass.autocomplete='off';resetPass.minLength=10;
   const resetButton=document.createElement('button');resetButton.type='submit';resetButton.textContent='تغيير كلمة المرور وتفعيل الحساب';
   const resetFeedback=document.createElement('p');resetFeedback.setAttribute('role','status');
-  resetForm.append(resetEmailBox,resetPassBox,resetConfirmBox,resetButton,resetFeedback);root.append(resetForm);
-  resetForm.onsubmit=async e=>{
-    e.preventDefault();resetFeedback.textContent='';
-    try{
-      validateParentPassword(resetPass.value);
-      if(resetPass.value!==resetConfirm.value)throw new Error('تأكيد كلمة المرور غير مطابق.');
-      resetButton.disabled=true;resetFeedback.textContent='جارٍ التغيير...';
-      await parentApi('reset_parent_password',{parent_email:resetEmail.value.trim(),password:resetPass.value});
-      resetFeedback.textContent='تم تغيير كلمة المرور وتفعيل الحساب.';resetPass.value='';resetConfirm.value='';
-    }catch(err){resetFeedback.textContent='تعذر التغيير: '+err.message;}finally{resetButton.disabled=false;}
-  };
+  resetForm.append(resetEmailBox,resetPassBox,resetButton,resetFeedback);root.append(resetForm);
+  resetForm.onsubmit=async e=>{e.preventDefault();resetButton.disabled=true;try{
+    await parentApi('reset_parent_password',{parent_email:resetEmail.value.trim(),password:resetPass.value});
+    resetFeedback.textContent='تم تغيير كلمة المرور وتفعيل الحساب.';resetPass.value='';
+  }catch(err){resetFeedback.textContent='تعذر التغيير: '+err.message;}finally{resetButton.disabled=false;}};
   const list=document.createElement('div');root.append(list);
   async function loadLinks(){list.textContent='جارٍ تحميل الروابط...';try{
     const {links}=await parentApi('list_links');list.replaceChildren();
@@ -711,4 +633,100 @@ async function renderParentManagement(){
     }
   }catch(err){list.textContent='تعذر تحميل الروابط: '+err.message;}}
   await loadLinks();
+}
+
+// Abnaa Al Noor: XLSX import and cross-system attendance report.
+async function abnaaApi(action,payload={}){
+  const {data:{session}}=await sb.auth.getSession();
+  if(!session?.access_token)throw new Error('انتهت الجلسة، سجّل الدخول مرة أخرى');
+  const response=await fetch(`${SUPABASE_URL.replace(/\/$/,'')}/functions/v1/abnaa-alnoor`,{
+    method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${session.access_token}`,'apikey':SUPABASE_PUBLISHABLE_KEY},
+    body:JSON.stringify({action,...payload})
+  });
+  const body=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
+  return body;
+}
+function abnaaNav(){
+  const nav=document.querySelector('#sideNav');if(!nav||nav.querySelector('[data-view="abnaa-import"]'))return;
+  for(const [v,label] of [['abnaa-import','⇧ استيراد أبناء النور XLSX'],['abnaa-report','▤ مقارنة البصمة وأبناء النور']]){
+    const b=document.createElement('button');b.dataset.view=v;b.textContent=label;
+    b.addEventListener('click',()=>load(v));nav.append(b);
+  }
+}
+function abnaaDate(v){
+  if(v instanceof Date&&!Number.isNaN(v.getTime()))return `${v.getFullYear()}-${String(v.getMonth()+1).padStart(2,'0')}-${String(v.getDate()).padStart(2,'0')}`;
+  const s=String(v||'').replace(/[٠-٩]/g,c=>String('٠١٢٣٤٥٦٧٨٩'.indexOf(c)));
+  const m=s.match(/(\d{4})[-/]([01]?\d)[-/]([0-3]?\d)/);
+  return m?`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`:null;
+}
+function abnaaTime(v){
+  if(v instanceof Date&&!Number.isNaN(v.getTime()))return `${String(v.getHours()).padStart(2,'0')}:${String(v.getMinutes()).padStart(2,'0')}`;
+  if(typeof v==='number'&&v>=0&&v<1){const n=Math.round(v*86400);return `${String(Math.floor(n/3600)%24).padStart(2,'0')}:${String(Math.floor(n%3600/60)).padStart(2,'0')}`;}
+  const s=String(v??'').trim();const m=s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);return m&&Number(m[1])<24&&Number(m[2])<60?`${m[1].padStart(2,'0')}:${m[2]}`:null;
+}
+async function abnaaXlsx(){
+  if(window.XLSX)return window.XLSX;
+  await new Promise((resolve,reject)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';s.onload=resolve;s.onerror=()=>reject(new Error('تعذر تحميل مكتبة Excel'));document.head.append(s);});
+  return window.XLSX;
+}
+async function abnaaParse(file){
+  if(!/\.xlsx$/i.test(file.name)||file.size>5*1024*1024)throw new Error('اختَر XLSX بحجم لا يزيد عن 5 MB');
+  const XLSX=await abnaaXlsx();const bytes=await file.arrayBuffer();
+  const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))).map(x=>x.toString(16).padStart(2,'0')).join('');
+  const book=XLSX.read(bytes,{type:'array',cellDates:true});const sheet=book.Sheets[book.SheetNames[0]];
+  const grid=XLSX.utils.sheet_to_json(sheet,{header:1,defval:'',raw:true});
+  const headerIndex=grid.findIndex(row=>row.some(c=>String(c).trim()==='الاسم')&&row.some(c=>String(c).trim()==='أسرة'));
+  if(headerIndex<0)throw new Error('لم أجد صف العناوين: الاسم / أسرة');
+  const headers=grid[headerIndex].map(x=>String(x??'').trim());
+  const find=(s)=>headers.findIndex(x=>x===s);const nameCol=find('الاسم'),phoneCol=find('موبايل'),classCol=find('أسرة');
+  const meetings=headers.map((h,i)=>({date:abnaaDate(h),scheduled:abnaaTime(h.split(/\s+/).slice(1).join(' '))||'17:00',i})).filter(x=>x.date);
+  if(!meetings.length)throw new Error('لا توجد أعمدة تواريخ اجتماعات في الملف');
+  if(new Set(meetings.map(x=>x.date)).size!==meetings.length)throw new Error('تاريخ اجتماع مكرر');
+  const rows=[];const seen=new Set();
+  for(const row of grid.slice(headerIndex+1)){
+    const name=String(row[nameCol]??'').trim();if(!name)continue;
+    const key=name.replace(/\s+/g,' ').trim();if(seen.has(key))throw new Error(`اسم مكرر في الملف: ${name}`);seen.add(key);
+    const values=meetings.map(m=>{
+      const raw=String(row[m.i]??'').trim();const time=abnaaTime(row[m.i]);
+      if(raw&&!time&&raw.toUpperCase()!=='X')throw new Error(`قيمة حضور غير مفهومة للشاب ${name} بتاريخ ${m.date}: ${raw}`);
+      return {raw,status:time?'present':'absent',time,scheduled:m.scheduled};
+    });
+    rows.push({name,phone:String(row[phoneCol]??'').trim(),class_name:String(row[classCol]??'').trim(),meetings:values});
+  }
+  if(!rows.length)throw new Error('الملف لا يحتوي على شباب');
+  return {file_name:file.name,file_hash:hash,dates:meetings.map(x=>x.date),rows};
+}
+async function renderAbnaaImport(){
+  const root=$('content');root.replaceChildren();
+  const h=document.createElement('h3');h.textContent='استيراد تقرير حضور أبناء النور (Excel)';root.append(h);
+  const p=document.createElement('p');p.textContent='يتم قراءة الاسم والموبايل والفصل وأعمدة الاجتماعات. X والفراغ = غائب، والوقت = حاضر. راجع الملخص قبل الاستيراد.';root.append(p);
+  const input=document.createElement('input');input.type='file';input.accept='.xlsx';root.append(input);
+  const preview=document.createElement('p');preview.setAttribute('role','status');root.append(preview);
+  const button=document.createElement('button');button.textContent='تأكيد الاستيراد';button.disabled=true;root.append(button);
+  let parsed=null;
+  input.onchange=async()=>{button.disabled=true;parsed=null;preview.textContent='جارٍ قراءة Excel...';try{parsed=await abnaaParse(input.files[0]);preview.textContent=`الشباب: ${parsed.rows.length} | الاجتماعات: ${parsed.dates.join('، ')} | إجمالي السجلات: ${parsed.rows.length*parsed.dates.length}`;button.disabled=false;}catch(e){preview.textContent=e.message;}};
+  button.onclick=async()=>{if(!parsed)return;button.disabled=true;preview.textContent='جارٍ حفظ البيانات في Supabase...';try{const r=await abnaaApi('import',parsed);preview.textContent=`تم الاستيراد: ${r.students} شاب، ${r.meetings} سجل، مطابق ${r.matched}، غير مطابق ${r.unmatched}، ملتبس ${r.ambiguous}.`;}catch(e){preview.textContent=`تعذر الاستيراد: ${e.message}`;}finally{button.disabled=false;}};
+  note('استيراد أبناء النور — XLSX');
+}
+async function renderAbnaaReport(){
+  const root=$('content');root.replaceChildren();const heading=document.createElement('h3');heading.textContent='مقارنة حضور أبناء النور مع البصمة';root.append(heading);
+  const controls=document.createElement('div');controls.style.cssText='display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin:12px 0';
+  const from=document.createElement('input');from.type='date';from.value=new Date(new Date().getFullYear(),new Date().getMonth(),1).toLocaleDateString('en-CA');
+  const to=document.createElement('input');to.type='date';to.value=new Date().toLocaleDateString('en-CA');
+  const status=document.createElement('select');[['','كل الحالات'],['both','حاضر في النظامين'],['fingerprint_only','بصمة فقط'],['abnaa_only','أبناء النور فقط'],['neither','بدون حضور في النظامين'],['not_in_source','غير موجود في أبناء النور']].forEach(([v,l])=>status.add(new Option(l,v)));
+  const search=document.createElement('input');search.placeholder='بحث باسم الشاب';
+  const run=document.createElement('button');run.textContent='عرض المقارنة';
+  for(const [label,el] of [['من',from],['إلى',to],['الحالة',status],['بحث',search]]){const wrap=document.createElement('label');wrap.textContent=label;wrap.append(el);controls.append(wrap);}controls.append(run);root.append(controls);
+  const summaryBox=document.createElement('div');root.append(summaryBox);const output=document.createElement('div');root.append(output);let data=[];
+  const redraw=()=>{const q=search.value.trim();const rows=data.filter(r=>(!status.value||r.category===status.value)&&(!q||r.name.includes(q)));output.replaceChildren();
+    const counts={both:0,fingerprint_only:0,abnaa_only:0,neither:0,not_in_source:0};data.forEach(r=>counts[r.category]=(counts[r.category]||0)+1);
+    summaryBox.replaceChildren(summary([['الشاب × الاجتماع',data.length],['حاضر في النظامين',counts.both],['بصمة فقط',counts.fingerprint_only],['أبناء النور فقط',counts.abnaa_only],['بدون حضور',counts.neither],['غير موجود في المصدر',counts.not_in_source]]));
+    const labels={both:'حاضر في النظامين',fingerprint_only:'بصمة فقط',abnaa_only:'أبناء النور فقط',neither:'بدون حضور',not_in_source:'غير موجود في أبناء النور'};
+    const display=rows.map(r=>({name:r.name,date:r.date,class_name:r.class_name,fingerprint_time:r.fingerprint_time||'—',abnaa_time:r.abnaa_time|| (r.abnaa_status==='absent'?'غائب':'غير موجود'),category:labels[r.category]||r.category}));
+    output.append(table(['الشاب','التاريخ','الفصل','وقت البصمة','أبناء النور','المقارنة'],display,['name','date','class_name','fingerprint_time','abnaa_time','category']));note(`النتائج المعروضة: ${rows.length}`);
+  };
+  run.onclick=async()=>{output.textContent='جارٍ تحميل المقارنة...';try{const result=await abnaaApi('report',{from:from.value,to:to.value});data=result.rows;redraw();const info=document.createElement('p');info.textContent=`أسماء تحتاج مراجعة: ${result.unmatched.length}. ${result.warning}`;output.prepend(info);if(result.unmatched.length)output.append(table(['اسم غير مطابق','الفصل','الحالة'],result.unmatched,['name','class_name','match_status']));}catch(e){output.textContent=`تعذر تحميل التقرير: ${e.message}`;}};
+  status.onchange=()=>{if(data.length)redraw();};search.oninput=()=>{if(data.length)redraw();};
+  note('مقارنة أبناء النور والبصمة');
 }
