@@ -535,6 +535,37 @@ const dashboardCards=(counts,total)=>{
     {key:'not_in_source',label:'تحتاج مراجعة',value:counts.not_in_source,detail:'بيانات ناقصة أو مطابقة غير مؤكدة؛ لا تُحسب غياباً',bg:'#fff1dc',accent:'#8c5a13'}
   ];
 };
+// Home-only chart: unique youths per class, present in either attendance source.
+function createClassAttendanceChart(groups){
+  const section=document.createElement('section');
+  section.style.cssText='margin-top:26px;padding:20px;border:1px solid #dce9e3;border-radius:16px;background:#fff';
+  const heading=document.createElement('h3');heading.textContent='نسبة الحضور حسب الفصل';
+  heading.style.cssText='margin:0 0 6px;color:#064a3e;font-size:19px';section.append(heading);
+  const description=document.createElement('p');description.textContent='الشباب الذين حضروا في أبناء النور أو البصمة أو الاثنين ÷ إجمالي الشباب في الفصل (بدون تكرار)';
+  description.style.cssText='margin:0 0 20px;color:#526b61;font-size:13px';section.append(description);
+  const byClass=new Map();
+  for(const rows of groups.values()){
+    const name=rows.map(r=>String(r.class_name??'').trim()).find(Boolean)||'فصل غير محدد';
+    if(!byClass.has(name))byClass.set(name,{total:0,present:0});
+    const record=byClass.get(name);record.total++;
+    if(['both','abnaa_only','fingerprint_only'].includes(attendanceCategory(rows)))record.present++;
+  }
+  if(!byClass.size){const p=document.createElement('p');p.textContent='لا توجد بيانات للفصول في التاريخ المحدد.';section.append(p);return section;}
+  const chart=document.createElement('div');chart.setAttribute('role','img');chart.setAttribute('aria-label','مخطط نسبة الحضور لكل فصل');
+  chart.style.cssText='display:grid;gap:17px';
+  for(const [name,record] of [...byClass].sort((a,b)=>a[0].localeCompare(b[0],'ar'))){
+    const pct=record.total?100*record.present/record.total:0;
+    const line=document.createElement('div');line.style.cssText='display:grid;gap:7px';
+    const info=document.createElement('div');info.style.cssText='display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap';
+    const label=document.createElement('strong');label.textContent=name;label.style.color='#173b34';
+    const count=document.createElement('span');count.textContent=`${pct.toFixed(1)}%  (${record.present} من ${record.total})`;count.style.cssText='color:#075c49;font-weight:750;font-variant-numeric:tabular-nums';
+    info.append(label,count);
+    const track=document.createElement('div');track.style.cssText='height:19px;background:#e9f1ed;border-radius:999px;overflow:hidden';
+    const bar=document.createElement('div');bar.style.cssText=`height:100%;width:${pct}%;background:#08775c;border-radius:999px;transition:width .2s`;
+    track.append(bar);line.append(info,track);chart.append(line);
+  }
+  section.append(chart);return section;
+}
 function createAttendanceCard(item,click){
   const card=document.createElement('button');card.type='button';card.className='stat';
   card.style.cssText=`cursor:pointer;text-align:inherit;border:2px solid transparent;width:100%;font:inherit;min-height:160px;display:flex;flex-direction:column;align-items:stretch;justify-content:center;gap:6px;border-radius:16px;padding:18px;background:${item.bg};color:#173b34;transition:transform .15s,border-color .15s`;
@@ -571,7 +602,7 @@ async function renderDashboard(){
           load('abnaa-compare');
         }));
       }
-      area.replaceChildren(grid);
+      area.replaceChildren(grid,createClassAttendanceChart(groups));
       note(`اجتماع ${selected} — ${groups.size} شاب بدون تكرار`);
     }catch(e){if(current===requestNumber)area.textContent=`تعذر تحميل الإحصائيات: ${e.message}`;}
   }
