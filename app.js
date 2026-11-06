@@ -745,35 +745,49 @@ async function renderAbnaaReport(){
     filtered=data.filter(r=>(!status.value||(status.value.startsWith('reg_')?r.registration_status===status.value.slice(4):r.category===status.value))&&(!department.value||r.class_name===department.value)&&(!q||clean([r.name,r.class_name,r.user_id,r.fingerprint_id].join(' ')).includes(q)));
     const baseRows=filtered;
     const key=sortField.value,dir=direction.value==='asc'?1:-1;
-    filtered=baseRows.filter(r=>!activeCard||activeCard==='total'||r.category===activeCard);
+    // Count each youth once across the selected period, regardless of meeting count.
+    // Prefer the linked youth identity; normalize the name only as a fallback.
+    const youthKey=r=>{
+      const name=String(r.name??'').normalize('NFKC').replace(/[\u064B-\u065F\u0670\u0640]/g,'').replace(/[أإآ]/g,'ا').replace(/ى/g,'ي').replace(/\s+/g,' ').trim().toLowerCase();
+      return name ? `name:${name}` : `id:${r.user_id??r.fingerprint_id??'unknown'}:${r.class_name??''}`;
+    };
+    const groups=new Map();
+    for(const r of baseRows){const id=youthKey(r);if(!groups.has(id))groups.set(id,[]);groups.get(id).push(r);}
+    // A youth belongs to one card only, with an explicit period-wide priority.
+    // Review is reserved for youths with no confirmed attendance and incomplete source data.
+    const classify=rows=>{
+      const categories=new Set(rows.map(r=>r.category));
+      if(categories.has('both'))return 'both';
+      if(categories.has('abnaa_only') && categories.has('fingerprint_only'))return 'both';
+      if(categories.has('abnaa_only'))return 'abnaa_only';
+      if(categories.has('fingerprint_only'))return 'fingerprint_only';
+      if(categories.has('not_in_source') || rows.some(r=>r.needs_review))return 'not_in_source';
+      return 'neither';
+    };
+    const youthCategories=new Map([...groups].map(([id,rows])=>[id,classify(rows)]));
+    filtered=baseRows.filter(r=>!activeCard||activeCard==='total'||youthCategories.get(youthKey(r))===activeCard);
     filtered.sort((a,b)=>dir*String(a[key]??'').localeCompare(String(b[key]??''),'ar',{numeric:true,sensitivity:'base'}));
-    const counts={both:0,fingerprint_only:0,abnaa_only:0,neither:0,not_in_source:0};baseRows.forEach(r=>{counts[r.category]=(counts[r.category]||0)+1;});
-    // Six mutually exclusive attendance outcomes; total equals the sum of the five categories.
-    // 'not_in_source' means no Abnaa attendance record was available for this student/date;
-    // it does NOT necessarily mean the student's identity is unmatched or that they were absent.
+    const counts={both:0,fingerprint_only:0,abnaa_only:0,neither:0,not_in_source:0};
+    for(const category of youthCategories.values())counts[category]++;
     const sixCards=[
-      {key:'total',label:'إجمالي الشباب × الاجتماعات',value:baseRows.length,detail:'عدد سجلات الشباب خلال الاجتماعات المختارة (ليس عدد الشباب الفريدين)',bg:'#eef3f1'},
-      {key:'both',label:'حاضر في النظامين',value:counts.both,detail:'حضور مسجل في أبناء النور وبصمة في نفس اليوم',bg:'#e9f7ee'},
-      {key:'abnaa_only',label:'حاضر في أبناء النور فقط',value:counts.abnaa_only,detail:'حضور أبناء النور موجود ولا توجد بصمة لذلك اليوم',bg:'#fff4da'},
-      {key:'fingerprint_only',label:'حاضر بالبصمة فقط',value:counts.fingerprint_only,detail:'توجد بصمة ولا يوجد حضور مسجل في أبناء النور',bg:'#eaf2ff'},
-      {key:'neither',label:'لم يُسجل حضور في النظامين',value:counts.neither,detail:'سجل أبناء النور يشير إلى الغياب ولا توجد بصمة؛ تأكد من اكتمال DAT',bg:'#fdecec'},
-      {key:'not_in_source',label:'حالات تحتاج مراجعة',value:counts.not_in_source,detail:'لا يوجد سجل حضور من أبناء النور لهذا الشاب/اليوم؛ لا نعتبره غائباً تلقائياً. قد تكون هناك مشكلة ربط أو نقص في بيانات المصدر.',bg:'#fff1d8'}
+      {key:'total',label:'إجمالي الشباب (بدون تكرار)',value:groups.size,detail:'كل شاب محسوب مرة واحدة فقط خلال الفترة المحددة',bg:'#eef3f1'},
+      {key:'both',label:'حاضر في النظامين',value:counts.both,detail:'حضر في النظامين خلال الفترة، أو ثبت حضوره في كل نظام في يوم مختلف',bg:'#e9f7ee'},
+      {key:'abnaa_only',label:'حاضر في أبناء النور فقط',value:counts.abnaa_only,detail:'له حضور في أبناء النور خلال الفترة دون حضور مثبت بالبصمة',bg:'#fff4da'},
+      {key:'fingerprint_only',label:'حاضر بالبصمة فقط',value:counts.fingerprint_only,detail:'له بصمة خلال الفترة دون حضور مثبت في أبناء النور',bg:'#eaf2ff'},
+      {key:'neither',label:'لم يُسجل حضور في النظامين',value:counts.neither,detail:'لا يوجد حضور مثبت في النظامين خلال الفترة، مع توفر بيانات الغياب',bg:'#fdecec'},
+      {key:'not_in_source',label:'حالات تحتاج مراجعة',value:counts.not_in_source,detail:'لا يوجد حضور مؤكد، وبيانات أحد المصدرين ناقصة أو المطابقة تحتاج مراجعة؛ لا نعتبره غائباً تلقائياً',bg:'#fff1d8'}
     ];
     const cardGrid=document.createElement('div');cardGrid.className='stat-grid';
-    sixCards.forEach((item,i)=>{
-      const card=document.createElement('button');card.type='button';card.className='stat';card.setAttribute('aria-pressed',String(activeCard===item.key));card.title='اضغط لتصفية الجدول حسب هذه الحالة، واضغط مرة أخرى لإلغاء التصفية';card.style.cssText='cursor:pointer;text-align:inherit;border:2px solid transparent;width:100%;font:inherit;transition:border-color .15s,box-shadow .15s';card.onclick=()=>{activeCard=activeCard===item.key?null:item.key;redraw();};if(activeCard===item.key){card.style.borderColor='#006b57';card.style.boxShadow='0 0 0 2px rgba(0,107,87,.12)';}
-      card.style.backgroundColor=item.bg;
-      card.style.color='#173b34'; // Explicit high-contrast text on pastel card backgrounds
+    sixCards.forEach(item=>{
+      const card=document.createElement('button');card.type='button';card.className='stat';card.setAttribute('aria-pressed',String(activeCard===item.key));card.title='اضغط لتصفية الجدول حسب الشباب في هذه الحالة، واضغط مرة أخرى لإلغاء التصفية';card.style.cssText='cursor:pointer;text-align:inherit;border:2px solid transparent;width:100%;font:inherit;transition:border-color .15s,box-shadow .15s';card.onclick=()=>{activeCard=activeCard===item.key?null:item.key;redraw();};if(activeCard===item.key){card.style.borderColor='#006b57';card.style.boxShadow='0 0 0 2px rgba(0,107,87,.12)';}
+      card.style.backgroundColor=item.bg;card.style.color='#173b34';
       const label=document.createElement('span');label.textContent=item.label;label.style.cssText='color:#173b34!important;font-weight:700;opacity:1';
       const value=document.createElement('strong');value.textContent=String(item.value);value.style.cssText='color:#005b49!important;opacity:1';
-      const detail=document.createElement('small');detail.textContent=item.detail;
-      detail.style.cssText='display:block;font-size:12px;line-height:1.6;margin-top:8px;color:#34564d';
+      const detail=document.createElement('small');detail.textContent=item.detail;detail.style.cssText='display:block;font-size:12px;line-height:1.6;margin-top:8px;color:#34564d';
       card.append(label,value,detail);cardGrid.append(card);
     });
     summaryBox.replaceChildren(cardGrid);
-    if(counts.both+counts.abnaa_only+counts.fingerprint_only+counts.neither+counts.not_in_source!==baseRows.length){
-      const error=document.createElement('p');error.textContent='تنبيه: إجمالي الحالات لا يطابق إجمالي الصفوف؛ راجع بيانات التقرير.';error.style.color='#a52222';summaryBox.append(error);
-    }
+    if(Object.values(counts).reduce((a,b)=>a+b,0)!==groups.size){const error=document.createElement('p');error.textContent='تنبيه: إجمالي الحالات لا يطابق إجمالي الشباب الفريدين.';error.style.color='#a52222';summaryBox.append(error);}
     const resultTable=table(headers,filtered.map(printableRow),fields);
     const trs=resultTable.querySelectorAll('tbody tr');
     filtered.forEach((r,i)=>{
@@ -782,7 +796,7 @@ async function renderAbnaaReport(){
       if(r.needs_review)trs[i].title='مراجعة مطابقة الاسم مطلوبة';
     });
     output.replaceChildren(resultTable);
-    note(`النتائج المعروضة: ${filtered.length} من ${baseRows.length}${activeCard?' — فلتر الكارت نشط':''}`);
+    note(`النتائج المعروضة: ${filtered.length} سجل اجتماع، ${new Set(filtered.map(youthKey)).size} شاب من ${groups.size} شاب${activeCard?' — فلتر الكارت نشط':''}`);
   }
   async function fetchReport(){
     if(from.value>to.value){setMessage('تاريخ البداية يجب أن يكون قبل تاريخ النهاية.');return;}
