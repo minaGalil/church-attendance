@@ -763,8 +763,9 @@ async function renderAbnaaReport(){
     sixCards.forEach((item,i)=>{
       const card=document.createElement('button');card.type='button';card.className='stat';card.setAttribute('aria-pressed',String(activeCard===item.key));card.title='اضغط لتصفية الجدول حسب هذه الحالة، واضغط مرة أخرى لإلغاء التصفية';card.style.cssText='cursor:pointer;text-align:inherit;border:2px solid transparent;width:100%;font:inherit;transition:border-color .15s,box-shadow .15s';card.onclick=()=>{activeCard=activeCard===item.key?null:item.key;redraw();};if(activeCard===item.key){card.style.borderColor='#006b57';card.style.boxShadow='0 0 0 2px rgba(0,107,87,.12)';}
       card.style.backgroundColor=item.bg;
-      const label=document.createElement('span');label.textContent=item.label;
-      const value=document.createElement('strong');value.textContent=String(item.value);
+      card.style.color='#173b34'; // Explicit high-contrast text on pastel card backgrounds
+      const label=document.createElement('span');label.textContent=item.label;label.style.cssText='color:#173b34!important;font-weight:700;opacity:1';
+      const value=document.createElement('strong');value.textContent=String(item.value);value.style.cssText='color:#005b49!important;opacity:1';
       const detail=document.createElement('small');detail.textContent=item.detail;
       detail.style.cssText='display:block;font-size:12px;line-height:1.6;margin-top:8px;color:#34564d';
       card.append(label,value,detail);cardGrid.append(card);
