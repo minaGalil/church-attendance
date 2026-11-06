@@ -711,16 +711,23 @@ async function renderAbnaaReport(){
   const controls=document.createElement('div');controls.className='abnaa-controls';
   controls.style.cssText='display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin:12px 0';
   const dateValue=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  const today=new Date(), first=new Date(today.getFullYear(),today.getMonth()-1,1); // Include previous month's meetings by default.
-  const from=document.createElement('input');from.type='date';from.value=dateValue(first);
-  const to=document.createElement('input');to.type='date';to.value=dateValue(today);
+  // Default to the most recent Thursday (including today if today is Thursday).
+  // Use local dates so the date inputs do not shift with timezone.
+  const lastThursday=()=>{
+    const d=new Date();
+    d.setHours(12,0,0,0);
+    d.setDate(d.getDate()-(d.getDay()+3)%7);
+    return dateValue(d);
+  };
+  const from=document.createElement('input');from.type='date';from.value=lastThursday();
+  const to=document.createElement('input');to.type='date';to.value=lastThursday();
   const status=document.createElement('select');
   [['','كل الحالات'],['reg_both','مسجل في النظامين'],['reg_abnaa_only','مسجل في أبناء النور فقط'],['reg_fingerprint_only','مسجل في البصمة فقط'],['both','حاضر في النظامين'],['fingerprint_only','بصمة فقط'],['abnaa_only','أبناء النور فقط'],['neither','بدون حضور في النظامين'],['not_in_source','غير موجود في أبناء النور']].forEach(([v,l])=>status.add(new Option(l,v)));
   const search=document.createElement('input');search.placeholder='الاسم أو الفصل أو رقم البصمة';
   const department=document.createElement('select');department.add(new Option('كل الفصول',''));
   const sortField=document.createElement('select');
   [['name','اسم الشاب'],['date','التاريخ'],['class_name','الفصل'],['fingerprint_time','وقت البصمة'],['abnaa_time','وقت أبناء النور'],['category','حالة المقارنة'],['registration_status','حالة التسجيل']].forEach(([v,l])=>sortField.add(new Option(l,v)));
-  const direction=document.createElement('select');direction.add(new Option('تصاعدي','asc'));direction.add(new Option('تنازلي','desc'));sortField.value='date';direction.value='desc';
+  const direction=document.createElement('select');direction.add(new Option('تصاعدي','asc'));direction.add(new Option('تنازلي','desc'));sortField.value='name';direction.value='asc';
   const run=document.createElement('button');run.textContent='عرض التقرير';
   const reset=document.createElement('button');reset.textContent='مسح الفلاتر';reset.className='light';
   const excel=document.createElement('button');excel.textContent='▤ تصدير Excel (CSV)';excel.className='outline';excel.disabled=true;
@@ -819,7 +826,7 @@ async function renderAbnaaReport(){
   run.onclick=fetchReport;
   for(const el of [status,department,sortField,direction])el.onchange=()=>{if(hasLoaded)redraw();};
   search.oninput=()=>{if(hasLoaded)redraw();};
-  reset.onclick=async()=>{activeCard=null;search.value='';status.value='';department.value='';sortField.value='date';direction.value='desc';from.value=dateValue(first);to.value=dateValue(today);await fetchReport();};
+  reset.onclick=async()=>{activeCard=null;search.value='';status.value='';department.value='';sortField.value='name';direction.value='asc';from.value=lastThursday();to.value=lastThursday();await fetchReport();};
   for(const dateInput of [from,to])dateInput.addEventListener('change',()=>{hasLoaded=false;excel.disabled=true;pdf.disabled=true;note('تم تغيير الفترة؛ اضغط عرض التقرير لتحميل بيانات الفترة الجديدة.');});
   excel.onclick=()=>{
     if(!hasLoaded)return;
