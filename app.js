@@ -765,25 +765,29 @@ async function renderAbnaaReport(){
       return 'neither';
     };
     const youthCategories=new Map([...groups].map(([id,rows])=>[id,classify(rows)]));
-    filtered=baseRows.filter(r=>!activeCard||activeCard==='total'||youthCategories.get(youthKey(r))===activeCard);
+    filtered=baseRows.filter(r=>!activeCard||activeCard==='total'||(activeCard==='attended' && ['both','abnaa_only','fingerprint_only'].includes(youthCategories.get(youthKey(r))))||youthCategories.get(youthKey(r))===activeCard);
     filtered.sort((a,b)=>dir*String(a[key]??'').localeCompare(String(b[key]??''),'ar',{numeric:true,sensitivity:'base'}));
     const counts={both:0,fingerprint_only:0,abnaa_only:0,neither:0,not_in_source:0};
     for(const category of youthCategories.values())counts[category]++;
-    const sixCards=[
-      {key:'total',label:'إجمالي الشباب (بدون تكرار)',value:groups.size,detail:'كل شاب محسوب مرة واحدة فقط خلال الفترة المحددة',bg:'#eef3f1'},
-      {key:'both',label:'حاضر في النظامين',value:counts.both,detail:'حضر في النظامين خلال الفترة، أو ثبت حضوره في كل نظام في يوم مختلف',bg:'#e9f7ee'},
-      {key:'abnaa_only',label:'حاضر في أبناء النور فقط',value:counts.abnaa_only,detail:'له حضور في أبناء النور خلال الفترة دون حضور مثبت بالبصمة',bg:'#fff4da'},
-      {key:'fingerprint_only',label:'حاضر بالبصمة فقط',value:counts.fingerprint_only,detail:'له بصمة خلال الفترة دون حضور مثبت في أبناء النور',bg:'#eaf2ff'},
-      {key:'neither',label:'لم يُسجل حضور في النظامين',value:counts.neither,detail:'لا يوجد حضور مثبت في النظامين خلال الفترة، مع توفر بيانات الغياب',bg:'#fdecec'},
-      {key:'not_in_source',label:'حالات تحتاج مراجعة',value:counts.not_in_source,detail:'لا يوجد حضور مؤكد، وبيانات أحد المصدرين ناقصة أو المطابقة تحتاج مراجعة؛ لا نعتبره غائباً تلقائياً',bg:'#fff1d8'}
+    const attended=counts.both+counts.abnaa_only+counts.fingerprint_only;
+    const attendancePct=groups.size ? (100*attended/groups.size).toFixed(1)+'%' : '0.0%';
+    const cards=[
+      {key:'total',label:'إجمالي الشباب',value:groups.size,detail:'عدد الشباب الفريدين خلال الفترة المختارة',bg:'#edf3f1',accent:'#164b42'},
+      {key:'attended',label:'إجمالي الحاضرين',value:attended,detail:'حضر في أي نظام مرة واحدة على الأقل — بدون تكرار',bg:'#ddf3e6',accent:'#076b4e'},
+      {key:'attended',label:'نسبة الحضور',value:attendancePct,detail:'إجمالي الحاضرين ÷ إجمالي الشباب × 100',bg:'#e6f3f6',accent:'#075b70'},
+      {key:'both',label:'حاضر في النظامين',value:counts.both,detail:'ثبت حضوره في النظامين خلال الفترة',bg:'#e9f7ee',accent:'#08754d'},
+      {key:'abnaa_only',label:'أبناء النور فقط',value:counts.abnaa_only,detail:'حضر في أبناء النور دون بصمة خلال الفترة',bg:'#fff4da',accent:'#896000'},
+      {key:'fingerprint_only',label:'البصمة فقط',value:counts.fingerprint_only,detail:'حضر بالبصمة دون حضور أبناء النور خلال الفترة',bg:'#eaf2ff',accent:'#235ba3'},
+      {key:'neither',label:'بدون حضور مثبت',value:counts.neither,detail:'لم يُسجل حضور في أي نظام مع توفر بيانات الغياب',bg:'#fdecec',accent:'#a13c40'},
+      {key:'not_in_source',label:'تحتاج مراجعة',value:counts.not_in_source,detail:'نقص بيانات أو مطابقة غير مؤكدة؛ لا تُحسب غياباً',bg:'#fff1dc',accent:'#8c5a13'}
     ];
-    const cardGrid=document.createElement('div');cardGrid.className='stat-grid';
-    sixCards.forEach(item=>{
-      const card=document.createElement('button');card.type='button';card.className='stat';card.setAttribute('aria-pressed',String(activeCard===item.key));card.title='اضغط لتصفية الجدول حسب الشباب في هذه الحالة، واضغط مرة أخرى لإلغاء التصفية';card.style.cssText='cursor:pointer;text-align:inherit;border:2px solid transparent;width:100%;font:inherit;transition:border-color .15s,box-shadow .15s';card.onclick=()=>{activeCard=activeCard===item.key?null:item.key;redraw();};if(activeCard===item.key){card.style.borderColor='#006b57';card.style.boxShadow='0 0 0 2px rgba(0,107,87,.12)';}
-      card.style.backgroundColor=item.bg;card.style.color='#173b34';
-      const label=document.createElement('span');label.textContent=item.label;label.style.cssText='color:#173b34!important;font-weight:700;opacity:1';
-      const value=document.createElement('strong');value.textContent=String(item.value);value.style.cssText='color:#005b49!important;opacity:1';
-      const detail=document.createElement('small');detail.textContent=item.detail;detail.style.cssText='display:block;font-size:12px;line-height:1.6;margin-top:8px;color:#34564d';
+    const cardGrid=document.createElement('div');cardGrid.className='stat-grid attendance-kpi-grid';
+    cards.forEach(item=>{
+      const card=document.createElement('button');card.type='button';card.className='stat';card.setAttribute('aria-pressed',String(activeCard===item.key));card.title='اضغط لتصفية الجدول حسب الشباب في هذه الحالة، واضغط مرة أخرى لإلغاء التصفية';card.style.cssText='cursor:pointer;text-align:inherit;border:2px solid transparent;width:100%;font:inherit;transition:transform .15s,border-color .15s,box-shadow .15s;min-height:160px;display:flex;flex-direction:column;align-items:stretch;justify-content:center;gap:6px;border-radius:16px;padding:18px';card.onclick=()=>{activeCard=activeCard===item.key?null:item.key;redraw();};if(activeCard===item.key){card.style.borderColor='#006b57';card.style.boxShadow='0 0 0 2px rgba(0,107,87,.12)';}
+      card.style.backgroundColor=item.bg;card.style.color='#173b34';card.setAttribute('aria-label',item.label+': '+item.value+'. اضغط لتصفية الجدول');
+      const label=document.createElement('span');label.textContent=item.label;label.style.cssText='color:#173b34!important;font-weight:750;opacity:1;font-size:16px';
+      const value=document.createElement('strong');value.textContent=String(item.value);value.style.cssText='color:'+item.accent+'!important;opacity:1;font-size:34px;line-height:1.2;font-variant-numeric:tabular-nums';
+      const detail=document.createElement('small');detail.textContent=item.detail;detail.style.cssText='display:block;font-size:12px;line-height:1.6;margin-top:4px;color:#34564d';
       card.append(label,value,detail);cardGrid.append(card);
     });
     summaryBox.replaceChildren(cardGrid);
