@@ -746,8 +746,31 @@ async function renderAbnaaReport(){
     const key=sortField.value,dir=direction.value==='asc'?1:-1;
     filtered.sort((a,b)=>dir*String(a[key]??'').localeCompare(String(b[key]??''),'ar',{numeric:true,sensitivity:'base'}));
     const counts={both:0,fingerprint_only:0,abnaa_only:0,neither:0,not_in_source:0};filtered.forEach(r=>{counts[r.category]=(counts[r.category]||0)+1;});
-    const regCounts={both:0,abnaa_only:0,fingerprint_only:0};filtered.forEach(r=>{if(r.registration_status in regCounts)regCounts[r.registration_status]++;});
-    summaryBox.replaceChildren(summary([['مسجل في النظامين',regCounts.both],['أبناء النور فقط',regCounts.abnaa_only],['البصمة فقط',regCounts.fingerprint_only],['الشاب × الاجتماع',filtered.length],['حاضر في النظامين',counts.both],['بصمة فقط',counts.fingerprint_only],['أبناء النور فقط',counts.abnaa_only],['بدون حضور',counts.neither],['غير موجود في المصدر',counts.not_in_source]]));
+    // Six mutually exclusive attendance outcomes; total equals the sum of the five categories.
+    // 'not_in_source' means no Abnaa attendance record was available for this student/date;
+    // it does NOT necessarily mean the student's identity is unmatched or that they were absent.
+    const sixCards=[
+      {label:'إجمالي الشباب × الاجتماعات',value:filtered.length,detail:'عدد سجلات الشباب خلال الاجتماعات المختارة (ليس عدد الشباب الفريدين)',bg:'#eef3f1'},
+      {label:'حاضر في النظامين',value:counts.both,detail:'حضور مسجل في أبناء النور وبصمة في نفس اليوم',bg:'#e9f7ee'},
+      {label:'حاضر في أبناء النور فقط',value:counts.abnaa_only,detail:'حضور أبناء النور موجود ولا توجد بصمة لذلك اليوم',bg:'#fff4da'},
+      {label:'حاضر بالبصمة فقط',value:counts.fingerprint_only,detail:'توجد بصمة ولا يوجد حضور مسجل في أبناء النور',bg:'#eaf2ff'},
+      {label:'لم يُسجل حضور في النظامين',value:counts.neither,detail:'سجل أبناء النور يشير إلى الغياب ولا توجد بصمة؛ تأكد من اكتمال DAT',bg:'#fdecec'},
+      {label:'حالات تحتاج مراجعة',value:counts.not_in_source,detail:'لا يوجد سجل حضور من أبناء النور لهذا الشاب/اليوم؛ لا نعتبره غائباً تلقائياً. قد تكون هناك مشكلة ربط أو نقص في بيانات المصدر.',bg:'#fff1d8'}
+    ];
+    const cardGrid=document.createElement('div');cardGrid.className='stat-grid';
+    sixCards.forEach((item,i)=>{
+      const card=document.createElement('div');card.className='stat';
+      card.style.backgroundColor=item.bg;
+      const label=document.createElement('span');label.textContent=item.label;
+      const value=document.createElement('strong');value.textContent=String(item.value);
+      const detail=document.createElement('small');detail.textContent=item.detail;
+      detail.style.cssText='display:block;font-size:12px;line-height:1.6;margin-top:8px;color:#34564d';
+      card.append(label,value,detail);cardGrid.append(card);
+    });
+    summaryBox.replaceChildren(cardGrid);
+    if(counts.both+counts.abnaa_only+counts.fingerprint_only+counts.neither+counts.not_in_source!==filtered.length){
+      const error=document.createElement('p');error.textContent='تنبيه: إجمالي الحالات لا يطابق إجمالي الصفوف؛ راجع بيانات التقرير.';error.style.color='#a52222';summaryBox.append(error);
+    }
     const resultTable=table(headers,filtered.map(printableRow),fields);
     const trs=resultTable.querySelectorAll('tbody tr');
     filtered.forEach((r,i)=>{
