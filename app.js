@@ -734,7 +734,7 @@ async function renderAbnaaReport(){
   const warning=document.createElement('p');printable.append(warning);
   const output=document.createElement('div');printable.append(output);
   const unmatchedBox=document.createElement('div');printable.append(unmatchedBox);
-  let data=[],filtered=[],unmatched=[],hasLoaded=false;
+  let data=[],filtered=[],unmatched=[],hasLoaded=false,activeCard=null;
   const labels={both:'حاضر في النظامين',fingerprint_only:'بصمة فقط',abnaa_only:'أبناء النور فقط',neither:'بدون حضور',not_in_source:'غير موجود في أبناء النور'};
   const fields=['name','date','class_name','fingerprint_time','abnaa_time','category'];
   const headers=['الشاب','التاريخ','الفصل','وقت البصمة','أبناء النور','المقارنة'];
@@ -743,23 +743,25 @@ async function renderAbnaaReport(){
   function redraw(){
     const q=clean(search.value);
     filtered=data.filter(r=>(!status.value||(status.value.startsWith('reg_')?r.registration_status===status.value.slice(4):r.category===status.value))&&(!department.value||r.class_name===department.value)&&(!q||clean([r.name,r.class_name,r.user_id,r.fingerprint_id].join(' ')).includes(q)));
+    const baseRows=filtered;
     const key=sortField.value,dir=direction.value==='asc'?1:-1;
+    filtered=baseRows.filter(r=>!activeCard||activeCard==='total'||r.category===activeCard);
     filtered.sort((a,b)=>dir*String(a[key]??'').localeCompare(String(b[key]??''),'ar',{numeric:true,sensitivity:'base'}));
-    const counts={both:0,fingerprint_only:0,abnaa_only:0,neither:0,not_in_source:0};filtered.forEach(r=>{counts[r.category]=(counts[r.category]||0)+1;});
+    const counts={both:0,fingerprint_only:0,abnaa_only:0,neither:0,not_in_source:0};baseRows.forEach(r=>{counts[r.category]=(counts[r.category]||0)+1;});
     // Six mutually exclusive attendance outcomes; total equals the sum of the five categories.
     // 'not_in_source' means no Abnaa attendance record was available for this student/date;
     // it does NOT necessarily mean the student's identity is unmatched or that they were absent.
     const sixCards=[
-      {label:'إجمالي الشباب × الاجتماعات',value:filtered.length,detail:'عدد سجلات الشباب خلال الاجتماعات المختارة (ليس عدد الشباب الفريدين)',bg:'#eef3f1'},
-      {label:'حاضر في النظامين',value:counts.both,detail:'حضور مسجل في أبناء النور وبصمة في نفس اليوم',bg:'#e9f7ee'},
-      {label:'حاضر في أبناء النور فقط',value:counts.abnaa_only,detail:'حضور أبناء النور موجود ولا توجد بصمة لذلك اليوم',bg:'#fff4da'},
-      {label:'حاضر بالبصمة فقط',value:counts.fingerprint_only,detail:'توجد بصمة ولا يوجد حضور مسجل في أبناء النور',bg:'#eaf2ff'},
-      {label:'لم يُسجل حضور في النظامين',value:counts.neither,detail:'سجل أبناء النور يشير إلى الغياب ولا توجد بصمة؛ تأكد من اكتمال DAT',bg:'#fdecec'},
-      {label:'حالات تحتاج مراجعة',value:counts.not_in_source,detail:'لا يوجد سجل حضور من أبناء النور لهذا الشاب/اليوم؛ لا نعتبره غائباً تلقائياً. قد تكون هناك مشكلة ربط أو نقص في بيانات المصدر.',bg:'#fff1d8'}
+      {key:'total',label:'إجمالي الشباب × الاجتماعات',value:baseRows.length,detail:'عدد سجلات الشباب خلال الاجتماعات المختارة (ليس عدد الشباب الفريدين)',bg:'#eef3f1'},
+      {key:'both',label:'حاضر في النظامين',value:counts.both,detail:'حضور مسجل في أبناء النور وبصمة في نفس اليوم',bg:'#e9f7ee'},
+      {key:'abnaa_only',label:'حاضر في أبناء النور فقط',value:counts.abnaa_only,detail:'حضور أبناء النور موجود ولا توجد بصمة لذلك اليوم',bg:'#fff4da'},
+      {key:'fingerprint_only',label:'حاضر بالبصمة فقط',value:counts.fingerprint_only,detail:'توجد بصمة ولا يوجد حضور مسجل في أبناء النور',bg:'#eaf2ff'},
+      {key:'neither',label:'لم يُسجل حضور في النظامين',value:counts.neither,detail:'سجل أبناء النور يشير إلى الغياب ولا توجد بصمة؛ تأكد من اكتمال DAT',bg:'#fdecec'},
+      {key:'not_in_source',label:'حالات تحتاج مراجعة',value:counts.not_in_source,detail:'لا يوجد سجل حضور من أبناء النور لهذا الشاب/اليوم؛ لا نعتبره غائباً تلقائياً. قد تكون هناك مشكلة ربط أو نقص في بيانات المصدر.',bg:'#fff1d8'}
     ];
     const cardGrid=document.createElement('div');cardGrid.className='stat-grid';
     sixCards.forEach((item,i)=>{
-      const card=document.createElement('div');card.className='stat';
+      const card=document.createElement('button');card.type='button';card.className='stat';card.setAttribute('aria-pressed',String(activeCard===item.key));card.title='اضغط لتصفية الجدول حسب هذه الحالة، واضغط مرة أخرى لإلغاء التصفية';card.style.cssText='cursor:pointer;text-align:inherit;border:2px solid transparent;width:100%;font:inherit;transition:border-color .15s,box-shadow .15s';card.onclick=()=>{activeCard=activeCard===item.key?null:item.key;redraw();};if(activeCard===item.key){card.style.borderColor='#006b57';card.style.boxShadow='0 0 0 2px rgba(0,107,87,.12)';}
       card.style.backgroundColor=item.bg;
       const label=document.createElement('span');label.textContent=item.label;
       const value=document.createElement('strong');value.textContent=String(item.value);
@@ -768,7 +770,7 @@ async function renderAbnaaReport(){
       card.append(label,value,detail);cardGrid.append(card);
     });
     summaryBox.replaceChildren(cardGrid);
-    if(counts.both+counts.abnaa_only+counts.fingerprint_only+counts.neither+counts.not_in_source!==filtered.length){
+    if(counts.both+counts.abnaa_only+counts.fingerprint_only+counts.neither+counts.not_in_source!==baseRows.length){
       const error=document.createElement('p');error.textContent='تنبيه: إجمالي الحالات لا يطابق إجمالي الصفوف؛ راجع بيانات التقرير.';error.style.color='#a52222';summaryBox.append(error);
     }
     const resultTable=table(headers,filtered.map(printableRow),fields);
@@ -779,7 +781,7 @@ async function renderAbnaaReport(){
       if(r.needs_review)trs[i].title='مراجعة مطابقة الاسم مطلوبة';
     });
     output.replaceChildren(resultTable);
-    note(`النتائج المعروضة: ${filtered.length}`);
+    note(`النتائج المعروضة: ${filtered.length} من ${baseRows.length}${activeCard?' — فلتر الكارت نشط':''}`);
   }
   async function fetchReport(){
     if(from.value>to.value){setMessage('تاريخ البداية يجب أن يكون قبل تاريخ النهاية.');return;}
@@ -792,13 +794,13 @@ async function renderAbnaaReport(){
       if([...department.options].some(o=>o.value===prev))department.value=prev;
       warning.textContent=`أسماء تحتاج مراجعة: ${unmatched.length}. ${result.warning||''}`;
       unmatchedBox.replaceChildren();if(unmatched.length){const h=document.createElement('h3');h.textContent='الأسماء غير المطابقة';unmatchedBox.append(h,table(['الاسم','الفصل','حالة المطابقة'],unmatched,['name','class_name','match_status']));}
-      hasLoaded=true;redraw();excel.disabled=false;pdf.disabled=false;
+      activeCard=null;hasLoaded=true;redraw();excel.disabled=false;pdf.disabled=false;
     }catch(e){output.textContent=`تعذر تحميل التقرير: ${e.message}`;}finally{run.disabled=false;}
   }
   run.onclick=fetchReport;
   for(const el of [status,department,sortField,direction])el.onchange=()=>{if(hasLoaded)redraw();};
   search.oninput=()=>{if(hasLoaded)redraw();};
-  reset.onclick=async()=>{search.value='';status.value='';department.value='';sortField.value='date';direction.value='desc';from.value=dateValue(first);to.value=dateValue(today);await fetchReport();};
+  reset.onclick=async()=>{activeCard=null;search.value='';status.value='';department.value='';sortField.value='date';direction.value='desc';from.value=dateValue(first);to.value=dateValue(today);await fetchReport();};
   for(const dateInput of [from,to])dateInput.addEventListener('change',()=>{hasLoaded=false;excel.disabled=true;pdf.disabled=true;note('تم تغيير الفترة؛ اضغط عرض التقرير لتحميل بيانات الفترة الجديدة.');});
   excel.onclick=()=>{
     if(!hasLoaded)return;
