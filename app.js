@@ -152,9 +152,9 @@ async function load(v){
   const names={'abnaa-import':'استيراد أبناء النور XLSX','abnaa-compare':'تقارير الحضور و الغياب',home:'القائمة الرئيسية - خدمة متوسط بنين',children:'إدارة الشباب',classes:'عرض الفصول - خدمة متوسط بنين',
     attendance:'سجل الحضور والبصمات',unregistered:'البصمات غير المسجلة',reports:'التقارير',users:'إدارة المستخدمين',parents:'ربط أولياء الأمور بالأبناء',account:'حسابي - تغيير كلمة المرور',import:'استيراد ملف البصمة الأسبوعي'};
   title(names[v]||'خدمة متوسط بنين');
-  $('filterCard').hidden=['users','parents','import','account','abnaa-import','abnaa-compare'].includes(v);
-  $('exportCsv').hidden=['users','parents','import','account','abnaa-import','abnaa-compare'].includes(v);
-  $('printPdf').hidden=['users','parents','import','account','abnaa-import','abnaa-compare'].includes(v);
+  $('filterCard').hidden=['home','users','parents','import','account','abnaa-import','abnaa-compare'].includes(v);
+  $('exportCsv').hidden=['home','users','parents','import','account','abnaa-import','abnaa-compare'].includes(v);
+  $('printPdf').hidden=['home','users','parents','import','account','abnaa-import','abnaa-compare'].includes(v);
   $('department').closest('label').hidden=parent()||v==='unregistered';
   $('dateFrom').closest('label').hidden=['children','classes','home','users','parents','account'].includes(v);
   $('dateTo').closest('label').hidden=['children','classes','home','users','parents','account'].includes(v);
@@ -507,55 +507,77 @@ function renderAccount(){
 
 // Weekly dashboard: each registered youth is counted at most once per selected Thursday.
 // Absence is a roster-minus-punch estimate; it is not proof of absence before DAT upload.
+let homeReportNavigation=null;
+const reportDateLocal=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+function latestThursday(){const d=new Date();d.setHours(12,0,0,0);d.setDate(d.getDate()-(d.getDay()+3)%7);return reportDateLocal(d);}
+function youthIdentityKey(r){
+  const name=String(r.name??'').normalize('NFKC').replace(/[\u064B-\u065F\u0670\u0640]/g,'').replace(/[أإآ]/g,'ا').replace(/ى/g,'ي').replace(/\s+/g,' ').trim().toLowerCase();
+  return name?`name:${name}`:`id:${r.user_id??r.fingerprint_id??'unknown'}:${r.class_name??''}`;
+}
+function attendanceCategory(rows){
+  const categories=new Set(rows.map(r=>r.category));
+  if(categories.has('both')||(categories.has('abnaa_only')&&categories.has('fingerprint_only')))return 'both';
+  if(categories.has('abnaa_only'))return 'abnaa_only';
+  if(categories.has('fingerprint_only'))return 'fingerprint_only';
+  if(categories.has('not_in_source')||rows.some(r=>r.needs_review))return 'not_in_source';
+  return 'neither';
+}
+const dashboardCards=(counts,total)=>{
+  const attended=counts.both+counts.abnaa_only+counts.fingerprint_only;
+  return [
+    {key:'total',label:'إجمالي الشباب',value:total,detail:'عدد الشباب الفريدين في الاجتماع',bg:'#edf3f1',accent:'#164b42'},
+    {key:'attended',label:'إجمالي الحاضرين',value:attended,detail:'حضر في أي من النظامين — بدون تكرار',bg:'#ddf3e6',accent:'#076b4e'},
+    {key:'attended',label:'نسبة الحضور',value:total?(100*attended/total).toFixed(1)+'%':'0.0%',detail:'إجمالي الحاضرين ÷ إجمالي الشباب × 100',bg:'#e6f3f6',accent:'#075b70'},
+    {key:'both',label:'حاضر في النظامين',value:counts.both,detail:'ثبت حضوره في النظامين',bg:'#e9f7ee',accent:'#08754d'},
+    {key:'abnaa_only',label:'أبناء النور فقط',value:counts.abnaa_only,detail:'حضور أبناء النور دون بصمة',bg:'#fff4da',accent:'#896000'},
+    {key:'fingerprint_only',label:'البصمة فقط',value:counts.fingerprint_only,detail:'بصمة دون حضور أبناء النور',bg:'#eaf2ff',accent:'#235ba3'},
+    {key:'neither',label:'بدون حضور مثبت',value:counts.neither,detail:'لا حضور مثبت في النظامين مع توفر بيانات الغياب',bg:'#fdecec',accent:'#a13c40'},
+    {key:'not_in_source',label:'تحتاج مراجعة',value:counts.not_in_source,detail:'بيانات ناقصة أو مطابقة غير مؤكدة؛ لا تُحسب غياباً',bg:'#fff1dc',accent:'#8c5a13'}
+  ];
+};
+function createAttendanceCard(item,click){
+  const card=document.createElement('button');card.type='button';card.className='stat';
+  card.style.cssText=`cursor:pointer;text-align:inherit;border:2px solid transparent;width:100%;font:inherit;min-height:160px;display:flex;flex-direction:column;align-items:stretch;justify-content:center;gap:6px;border-radius:16px;padding:18px;background:${item.bg};color:#173b34;transition:transform .15s,border-color .15s`;
+  card.setAttribute('aria-label',`${item.label}: ${item.value}. اضغط لعرض التفاصيل`);
+  const label=document.createElement('span');label.textContent=item.label;label.style.cssText='color:#173b34!important;font-weight:750;font-size:16px';
+  const value=document.createElement('strong');value.textContent=String(item.value);value.style.cssText=`color:${item.accent}!important;font-size:34px;line-height:1.2;font-variant-numeric:tabular-nums`;
+  const detail=document.createElement('small');detail.textContent=item.detail;detail.style.cssText='display:block;font-size:12px;line-height:1.6;margin-top:4px;color:#34564d';
+  card.append(label,value,detail);card.onclick=click;return card;
+}
 async function renderDashboard(){
   const root=$('content');root.replaceChildren();
-  const youth=await loadYouth();
-  const punches=await allRows((a,b)=>sb.from('checkinout').select('USERID,CHECKTIME').order('CHECKTIME',{ascending:false}).range(a,b));
-  const iso=d=>`${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
-  const thursday=s=>{const d=new Date(`${s}T12:00:00Z`);d.setUTCDate(d.getUTCDate()-(d.getUTCDay()+3)%7);return iso(d)};
-  const punchDates=punches.map(p=>validDate(p.CHECKTIME)).filter(x=>/^\d{4}-\d{2}-\d{2}$/.test(x));
-  const today=iso(new Date());
-  const defaultWeek=thursday(punchDates.length?punchDates[0]:today);
-  const controls=document.createElement('div');controls.className='dash-controls';
-  const label=document.createElement('label');label.textContent='أسبوع الخدمة (الخميس): ';
-  const week=document.createElement('input');week.type='date';week.value=defaultWeek;label.append(week);
-  const explanation=document.createElement('p');explanation.className='dash-help';explanation.textContent='الحضور = شاب له بصمة يوم الخميس المختار. الغياب تقديري من قائمة الشباب المسجلين، ويتطلب رفع ملف DAT أولاً.';
-  controls.append(label,explanation);root.append(controls);
+  const controls=document.createElement('div');controls.style.cssText='display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 0 20px';
+  const label=document.createElement('label');label.textContent='تاريخ الاجتماع (الخميس)';
+  const day=document.createElement('input');day.type='date';day.value=latestThursday();label.append(day);controls.append(label);root.append(controls);
   const area=document.createElement('div');root.append(area);
-  const draw=()=>{
-    area.replaceChildren();
-    const day=week.value;if(!day){area.textContent='اختر تاريخاً.';return;}
-    const target=thursday(day);if(target!==day)week.value=target;
-    const roster=youth.filter(u=>u.DEFAULTDEPTID!=null && deptMap.has(u.DEFAULTDEPTID));
-    const known=new Set(roster.map(u=>Number(u.USERID)));
-    const present=new Set(punches.filter(p=>validDate(p.CHECKTIME)===target && known.has(Number(p.USERID))).map(p=>Number(p.USERID)));
-    const rawCount=punches.filter(p=>validDate(p.CHECKTIME)===target).length;
-    const total=roster.length, attended=present.size, absent=total-attended;
-    const pct=total?100*attended/total:0;
-    area.append(summary([['إجمالي الشباب المسجلين',total],['الحاضرون',attended],['بدون بصمة',absent],['نسبة الحضور',pct.toFixed(1)+'%']]));
-    const warn=document.createElement('p');warn.className='dash-help';warn.textContent=rawCount?`تاريخ الخدمة: ${target} — عدد البصمات الخام: ${rawCount}.`:`لا توجد بصمات مسجلة بتاريخ ${target}. تأكد من رفع ملف DAT قبل اعتبار أي شاب غائباً.`;area.append(warn);
-    const heading=document.createElement('h3');heading.textContent='الحضور حسب الفصل';area.append(heading);
-    const classes=[...deptMap.entries()].filter(([id])=>roster.some(u=>u.DEFAULTDEPTID===id)).map(([id,name])=>{
-      const students=roster.filter(u=>u.DEFAULTDEPTID===id),yes=students.filter(u=>present.has(Number(u.USERID))).length;
-      return {name,total:students.length,yes,no:students.length-yes,pct:students.length?yes/students.length*100:0};
-    });
-    const chart=document.createElement('div');chart.className='dash-chart';
-    classes.forEach(c=>{const item=document.createElement('div');item.className='dash-item';
-      const header=document.createElement('div');header.className='dash-item-head';
-      const name=document.createElement('strong');name.textContent=c.name;
-      const rate=document.createElement('span');rate.textContent=`${c.yes} / ${c.total} (${c.pct.toFixed(1)}%)`;
-      header.append(name,rate);const track=document.createElement('div');track.className='dash-track';
-      const fill=document.createElement('div');fill.className='dash-fill';fill.style.width=c.pct+'%';track.append(fill);item.append(header,track);chart.append(item);
-    });area.append(chart);
-    area.append(table(['الفصل','إجمالي الشباب','الحاضرون','بدون بصمة','نسبة الحضور'],classes.map(c=>({'name':c.name,'total':c.total,'yes':c.yes,'no':c.no,'rate':c.pct.toFixed(1)+'%'})),['name','total','yes','no','rate']));
-    const absentHeading=document.createElement('h3');absentHeading.textContent='الشباب بدون بصمة في الأسبوع المختار';area.append(absentHeading);
-    const missing=roster.filter(u=>!present.has(Number(u.USERID))).map(u=>({USERID:u.USERID,NAME:u.NAME,CLASS_NAME:deptMap.get(u.DEFAULTDEPTID)||'—'}));
-    area.append(table(['رقم البصمة','الاسم','الفصل'],missing,['USERID','NAME','CLASS_NAME']));
-    note(`لوحة متابعة أسبوع ${target} — ${attended} حاضر من ${total} شاب مسجل`);
-  };
-  week.addEventListener('change',draw);draw();
+  let requestNumber=0;
+  async function refresh(){
+    const current=++requestNumber;
+    const selected=day.value;
+    area.textContent='جارٍ تحميل إحصائيات الحضور...';
+    if(!selected){area.textContent='اختر تاريخ الاجتماع.';return;}
+    try{
+      const result=await abnaaApi('report',{from:selected,to:selected});
+      if(current!==requestNumber)return;
+      const rows=Array.isArray(result.rows)?result.rows:[];
+      const groups=new Map();
+      for(const r of rows){const key=youthIdentityKey(r);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(r);}
+      const counts={both:0,abnaa_only:0,fingerprint_only:0,neither:0,not_in_source:0};
+      for(const group of groups.values())counts[attendanceCategory(group)]++;
+      const grid=document.createElement('div');grid.className='stat-grid attendance-kpi-grid';
+      for(const item of dashboardCards(counts,groups.size)){
+        grid.append(createAttendanceCard(item,()=>{
+          homeReportNavigation={date:selected,card:item.key};
+          load('abnaa-compare');
+        }));
+      }
+      area.replaceChildren(grid);
+      note(`اجتماع ${selected} — ${groups.size} شاب بدون تكرار`);
+    }catch(e){if(current===requestNumber)area.textContent=`تعذر تحميل الإحصائيات: ${e.message}`;}
+  }
+  day.addEventListener('change',refresh);
+  await refresh();
 }
-
 
 // Parent portal: private data is returned ONLY by the server after checking the session.
 async function parentApi(action, payload={}){
@@ -719,8 +741,8 @@ async function renderAbnaaReport(){
     d.setDate(d.getDate()-(d.getDay()+3)%7);
     return dateValue(d);
   };
-  const from=document.createElement('input');from.type='date';from.value=lastThursday();
-  const to=document.createElement('input');to.type='date';to.value=lastThursday();
+  const from=document.createElement('input');from.type='date';from.value=homeReportNavigation?.date||lastThursday();
+  const to=document.createElement('input');to.type='date';to.value=homeReportNavigation?.date||lastThursday();
   const status=document.createElement('select');
   [['','كل الحالات'],['reg_both','مسجل في النظامين'],['reg_abnaa_only','مسجل في أبناء النور فقط'],['reg_fingerprint_only','مسجل في البصمة فقط'],['both','حاضر في النظامين'],['fingerprint_only','بصمة فقط'],['abnaa_only','أبناء النور فقط'],['neither','بدون حضور في النظامين'],['not_in_source','غير موجود في أبناء النور']].forEach(([v,l])=>status.add(new Option(l,v)));
   const search=document.createElement('input');search.placeholder='الاسم أو الفصل أو رقم البصمة';
@@ -742,6 +764,7 @@ async function renderAbnaaReport(){
   const output=document.createElement('div');printable.append(output);
   const unmatchedBox=document.createElement('div');printable.append(unmatchedBox);
   let data=[],filtered=[],unmatched=[],hasLoaded=false,activeCard=null;
+  const initialCard=homeReportNavigation?.card||null;homeReportNavigation=null;
   const labels={both:'حاضر في النظامين',fingerprint_only:'بصمة فقط',abnaa_only:'أبناء النور فقط',neither:'بدون حضور',not_in_source:'غير موجود في أبناء النور'};
   const fields=['name','date','class_name','fingerprint_time','abnaa_time','category'];
   const headers=['الشاب','التاريخ','الفصل','وقت البصمة','أبناء النور','المقارنة'];
@@ -820,7 +843,7 @@ async function renderAbnaaReport(){
       if([...department.options].some(o=>o.value===prev))department.value=prev;
       warning.textContent=`أسماء تحتاج مراجعة: ${unmatched.length}. ${result.warning||''}`;
       unmatchedBox.replaceChildren();if(unmatched.length){const h=document.createElement('h3');h.textContent='الأسماء غير المطابقة';unmatchedBox.append(h,table(['الاسم','الفصل','حالة المطابقة'],unmatched,['name','class_name','match_status']));}
-      activeCard=null;hasLoaded=true;redraw();excel.disabled=false;pdf.disabled=false;
+      activeCard=initialCard;hasLoaded=true;redraw();excel.disabled=false;pdf.disabled=false;
     }catch(e){output.textContent=`تعذر تحميل التقرير: ${e.message}`;}finally{run.disabled=false;}
   }
   run.onclick=fetchReport;
@@ -843,4 +866,5 @@ async function renderAbnaaReport(){
     window.print();
   };
   note('تقارير الحضور و الغياب — اختَر الفترة واضغط عرض التقرير');
+  if(initialCard)await fetchReport();
 }
